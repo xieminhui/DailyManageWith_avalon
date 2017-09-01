@@ -1,2 +1,23 @@
 
-*.html
+app/static1/scripts/controllers/admin.js
+app/static1/scripts/controllers/login.js
+app/static1/styles/main.css
+app/static1/styles/adminStyle.css
+app/test/BookTypeDaoTest.js
+app/test/BookDaoTest.js
+app/test/UserDaoTest.js
+app/views1/seeAllType.html
+app/views1/navSideBar.html
+app/views1/loginSuccess.html
+app/views1/manageAccount.html
+app/views1/seeAllSpend.html
+app/views1/login.html
+app/views1/index.html
+app/views1/error.html
+app/views1/footer.html
+app/views1/indexAdmin.html
+app/views1/admin.html
+app/views1/echarts.html
+app/views1/addSpending.html
+app/views1/addAdmin.html
+app/views1/addSpendType.html

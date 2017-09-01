@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/lib/bootstrap-3.3.6/css/bootstrap.css" />
+    <!-- 引入自定义样式 -->
+    <link rel="stylesheet" href="/static/styles/main.css">
+    <!-- 引入库文件 -->
+    <script src="/lib/jquery-1.9.1.js"></script>
+    <script src="/lib/bootstrap-3.3.6/js/bootstrap.js"></script>
+    <!--引入avalonjs-->
+    <script src="/lib/mmRouter-0.9/avalon.js"></script>
+    <!--使用requirejs，给avalonvm使用，引入mmstate,注意这里的require和node自带的是不一样的-->
+    <srcipt src="../lib/mmRouter-0.9/require.js"></srcipt>
+    <!-- 引入app.js和一些文件 -->
+    <script src="/static/scripts/avalonVm.js"></script>
+    <script src="/static/scripts/controllers/login.js"></script>
+    <title>管理界面起始页</title>
+</head>
+<body ms-controller="dailManage">
+    <!--设置avalon路由入口-->
+    <div ms-view></div>
+</body>
+</html>
