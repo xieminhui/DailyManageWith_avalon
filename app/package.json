@@ -43,5 +43,10 @@
   },
   "engines": {
     "node": ">=0.10.0"
+  },
+  "dependencies": {
+    "avalon2": "^2.2.9",
+    "mmstate": "^1.0.2",
+    "requirejs": "^2.3.5"
   }
 }
