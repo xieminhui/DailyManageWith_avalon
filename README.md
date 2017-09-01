@@ -1,1 +1,2 @@
 # DailyManageWith_avalon
+使用avalon替换angular重写前面日常消费管理系统，后台接口及数据库不变动。
