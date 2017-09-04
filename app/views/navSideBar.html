@@ -1,5 +1,7 @@
 <div class="col-sm-3 col-md-2 sidebar" ms-controller="navCtrl">
     <ul class="nav nav-sidebar">
-        <li ms-for="nav in @navGroups">{{nav.navName}}</li>
+        <li ms-repeat-el="navGroups" ui-sref-active="active">
+            <a href="#" ui-sref=".{{nav.urlName}}">{{el.navName}}</a><!--因为mmstate使用的是1.5的avalonjs,无法使用ms-for-->
+        </li>
     </ul>
 </div>
