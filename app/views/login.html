@@ -1,16 +1,16 @@
-<div class="login">
+<div class="login" ms-controller="LoginCtrl">
     <div class="container">
-        <form role="form" class="form-signin" name="loginForm" ng-submit="submitForm(loginForm.$valid,$event)">
+        <form role="form" ms-validate="@validate" id="myForm" class="form-signin" name="loginForm" ms-submit="postLoginData($event)">
             <h2 class="form-signin-heading">Please sign in</h2>
             <div class="form-group has-feedback">
                 <label for="inputUsername" class="sr-only">请输入账号</label>
-                <input type="text" id="inputUsername" name="inputUsername" class="form-control" placeholder="请输入账号" required autofocus="" ng-model="userName">
-                <span class="glyphicon glyphicon-ok form-control-feedback top-4px" ng-show="loginForm.inputUsername.$dirty && loginForm.inputUsername.$valid"></span>
+                <input type="text" id="inputUsername" name="inputUsername" class="form-control" placeholder="请输入账号" ms-duplex ='Username' ms-rules="required:true" data-required-message="请输入账号">
+                <span class="glyphicon glyphicon-ok form-control-feedback top-4px"></span>
             </div>
             <div class="form-group has-feedback">
                 <label for="inputPassword" class="sr-only">请输入密码</label>
-                <input type="password" id="inputPassword" name="inputPassword" class="form-control" placeholder="请输入密码" required ng-model="password">
-                <span class="glyphicon glyphicon-ok form-control-feedback top-4px" ng-show="loginForm.inputPassword.$dirty && loginForm.inputPassword.$valid"></span>
+                <input type="password" id="inputPassword" name="inputPassword" class="form-control" placeholder="请输入密码" ms-duplex="Password" ms-rules="required:true" data-required-message="请输入密码">
+                <span class="glyphicon glyphicon-ok form-control-feedback top-4px"></span>
             </div>
             <div class="checkbox">
                 <label>
@@ -21,4 +21,4 @@
         </form>
     </div>
 </div>
-<div ui-view="footer"></div>
+<div ms-view="footer"></div>

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>文章单页应用</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width">
+        <link rel="stylesheet" href="css/style.css">
+    </head>
+    <body 
+          ms-controller="root">
+          <span>number: {{@number}}</span>
+          <span>date: {{@date | date('yyyy- MM- dd mm:ss')}}</span>
+        <div ms-view="" class="layout"></div>
+        <div ms-view="footer">nihao</div>
+        <!-- <div ms-html="@page">nihao</div> -->
+    </body>
+    <script type="text/javascript" src="build/script/avalon.js"></script>
+    <script src="build/script/lib.js"></script>
+    <script src="build/script/route.js"></script>
+</html>
