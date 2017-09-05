@@ -23,5 +23,14 @@ avalon.define({
     }, {
         navName: '更改密码',
         urlName: 'manageAccount'
-    }]
+    }],
+    active : 'active',
+    addActive : function (e) {
+        var all = document.getElementsByClassName('nav-sidebar')[0].children;
+        var li = e.target;
+        for(var i = 0; i<all.length;i++){
+            avalon(all[i].children[0]).removeClass('active');
+        }
+        avalon(li).addClass('active');
+    }
 })
