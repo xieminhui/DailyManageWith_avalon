@@ -13,7 +13,7 @@ require(["mmState"], function() {
             // }
         },
         onError: function() {
-            console.log(arguments)
+         //   console.log(arguments)
         }, // 强烈打开错误配置
         onLoad : function (fromstate, tostate) {
             if(tostate.stateName == 'admin'){//这个很烦，如果不主动切换过去，登录进去后右边页面不会自动跳到第一个选项“添加类别”
@@ -47,6 +47,7 @@ require(["mmState"], function() {
 //设置子路由添加类别，这里开始配置右下方主要内容部分
     avalon.state('admin.addSpendType', {
         url: 'addSpendType',
+        controller : 'addSpendType',
         views : {
             '' : {
                 templateUrl: '/tpl/addSpendType.html'

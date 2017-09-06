@@ -1,6 +1,6 @@
 <div class="col-sm-3 col-md-2 sidebar" ms-controller="navCtrl">
     <ul class="nav nav-sidebar">
-        <li ms-repeat-el="navGroups">
+        <li ms-repeat-el="navGroups" data-repeat-rendered="rendered">
             <a ms-href="#!/admin/{{el.urlName}}"  ms-click='addActive($event)'>{{el.navName}}</a><!--因为mmstate使用的是1.5的avalonjs,无法使用ms-for-->
         </li>
     </ul>

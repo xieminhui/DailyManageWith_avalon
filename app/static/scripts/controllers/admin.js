@@ -1,6 +1,5 @@
 'use strict';
-
-avalon.define({
+var navCtrlVm = avalon.define({
     $id : 'navCtrl',
     navGroups : [{
         navName: '添加类别', //显示的名称
@@ -32,5 +31,44 @@ avalon.define({
             avalon(all[i].children[0]).removeClass('active');
         }
         avalon(li).addClass('active');
+    },
+    initActive : function () {
+        var all = document.getElementsByClassName('nav-sidebar')[0].children;
+        avalon(all[0].children[0]).addClass('active');
+    },
+    rendered : function () {
+        navCtrlVm.initActive();
+    }
+});
+
+//添加类别
+var addSpendTypeVm = avalon.define({
+    $id : "addSpendType",
+    typeName : '',
+    addType : function (e){
+        e.preventDefault();
+        if(addSpendTypeVm.typeName == ''){
+            return;
+        }
+        var formData = {
+            typeName: addSpendTypeVm.typeName
+        };
+        fetch('/addSpendType',{
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(formData)
+        }).then(function successCallback(response) {
+            if (response.status === 200) {
+                addSpendTypeVm.typeName = "";
+                response.json().then(function(data) {
+                    alert(data.success);
+                });
+            }
+        }, function errorCallback(response) {
+            alert("添加类别失败");
+        });
     }
 })

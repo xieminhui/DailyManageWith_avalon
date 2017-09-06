@@ -4,7 +4,7 @@ exports.config = {
     port: '3306',
     user: "root",
     password: "123456",
-    database: "daily",
+    database: "avalon",
     supportBigNumbers: true,
     bigNumberStrings: true,
     multipleStatements: true, //默认为false

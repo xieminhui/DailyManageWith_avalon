@@ -1,0 +1,57 @@
+{
+  "_from": "fetch-polyfill2",
+  "_id": "fetch-polyfill2@0.0.3",
+  "_inBundle": false,
+  "_integrity": "sha1-e4RIlBT7egSIgsOSDqTZoK7quVU=",
+  "_location": "/fetch-polyfill2",
+  "_phantomChildren": {},
+  "_requested": {
+    "type": "tag",
+    "registry": true,
+    "raw": "fetch-polyfill2",
+    "name": "fetch-polyfill2",
+    "escapedName": "fetch-polyfill2",
+    "rawSpec": "",
+    "saveSpec": null,
+    "fetchSpec": "latest"
+  },
+  "_requiredBy": [
+    "#USER",
+    "/"
+  ],
+  "_resolved": "https://registry.npmjs.org/fetch-polyfill2/-/fetch-polyfill2-0.0.3.tgz",
+  "_shasum": "7b84489414fb7a048882c3920ea4d9a0aeeab955",
+  "_spec": "fetch-polyfill2",
+  "_where": "E:\\git\\DailyManageWith_avalon\\app",
+  "author": {
+    "name": "RubyLouvre"
+  },
+  "bugs": {
+    "url": "https://github.com/RubyLouvre/fetch-polyfill/issues"
+  },
+  "bundleDependencies": false,
+  "deprecated": false,
+  "description": "fetch polyfill which supports all mainstream browsers, even IE6, IE7, IE8.....",
+  "devDependencies": {
+    "webpack": "^1.13.1"
+  },
+  "directories": {
+    "test": "test"
+  },
+  "homepage": "https://github.com/RubyLouvre/fetch-polyfill#readme",
+  "keywords": [
+    "fetch",
+    "ajax"
+  ],
+  "license": "MIT",
+  "main": "dist/index.js",
+  "name": "fetch-polyfill2",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RubyLouvre/fetch-polyfill.git"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "version": "0.0.3"
+}

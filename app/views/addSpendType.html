@@ -1,12 +1,12 @@
 <h1 class="page-header">添加消费类别</h1>
-<div class="row">
-    <form class="form-horizontal" role="form" name="addTypeForm" ng-submit="addType(addTypeForm.$valid,$event)">
+<div class="row" ms-controller="addSpendType">
+    <form class="form-horizontal" role="form" name="addTypeForm" ms-submit="addType($event)">
         <div class="form-group">
             <label class="col-md-2 control-label">
                 新的类别：
             </label>
             <div class="col-md-5">
-                <input type="text" class="form-control" placeholder="请输入类别名……" ng-model="typeName" id="typeName" name="typeName" required autofocus="">
+                <input type="text" class="form-control" placeholder="请输入类别名……" ms-duplex="typeName" id="typeName" name="typeName">
             </div>
         </div>
         <div class="form-group">
