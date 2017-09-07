@@ -72,3 +72,53 @@ var addSpendTypeVm = avalon.define({
         });
     }
 })
+
+require.config({
+    paths: {
+        "simplegrid": "../simplegrid/avalon.simplegrid"
+    }
+});
+//require表格simplegrid
+require(["simplegrid"], function () {
+    function  getData(url) {
+        var data = null;
+        fetch('url',{
+            method: 'get',
+            headers: {
+                'Accept': 'application/json'
+            }
+        }).then(function successCallback(response) {
+            if (response.status === 200) {
+                addSpendTypeVm.typeName = "";
+                response.json().then(function(data) {
+                    data = data;
+                });
+            }
+        }, function errorCallback(response) {
+            alert("获取数据失败");
+        });
+        return data;
+    }
+
+    //查看所有类别
+    avalon.define({
+        $id : 'seeAlltype',
+        simplegrid : {
+            columns : [
+                {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"},
+                {field: "Sort_name", text: "类别名", resizable: true, align: "center", width: "10%"},
+                {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"},
+                {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"}
+            ],
+            showRows: 10,
+            pageable: true,
+            pager: {
+                perPages: 20,
+                totalItems: 1000,
+                showPages: 5,
+                options: [10, 20, 30, 40]
+            },
+            data : getData('/seeAlltype')
+        }
+    })
+})
