@@ -1,6 +1,10 @@
 ///用于设置路由
 
-
+require.config({
+    paths: {
+        "mmState": "./avalon.oniui-master/mmRouter/mmState"
+    }
+});
 require(["mmState"], function() {
     avalon.define({       //这个一定要写再里面
         $id     :       'adminIndex'

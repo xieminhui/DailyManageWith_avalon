@@ -8,15 +8,16 @@
     <!-- 引入自定义样式 -->
     <link rel="stylesheet" href="/static/styles/main.css">
     <!-- 引入库文件 -->
-    <script src="/lib/jquery-1.9.1.js"></script>
-    <script src="/lib/bootstrap-3.3.6/js/bootstrap.js"></script>
-    <!--引入avalonjs-->
-    <script src="/lib/mmRouter-0.9/avalon.js"></script>
-    <!--使用requirejs，给avalonvm使用，引入mmstate,注意这里的require和node自带的是不一样的-->
-    <srcipt src="../lib/require.js"></srcipt>
-    <!-- 引入app.js和一些文件 -->
-    <script src="/static/scripts/avalonVm.js"></script>
-    <script src="/static/scripts/controllers/login.js"></script>
+    <script src="/lib/avalon.oniui-master/require.js" data-main="../static/scripts/index.js"></script>
+    <!--<script src="/lib/jquery-1.9.1.js"></script>-->
+    <!--<script src="/lib/bootstrap-3.3.6/js/bootstrap.js"></script>-->
+    <!--&lt;!&ndash;引入avalonjs&ndash;&gt;-->
+    <!--<script src="../lib/avalon.oniui-master/avalon.js"></script>-->
+    <!--&lt;!&ndash;使用requirejs，给avalonvm使用，引入mmstate,注意这里的require和node自带的是不一样的&ndash;&gt;-->
+    <!--<srcipt src="/lib/avalon.oniui-master/require.js"></srcipt>-->
+    <!--&lt;!&ndash; 引入app.js和一些文件 &ndash;&gt;-->
+    <!--&lt;!&ndash;<script src="/static/scripts/avalonVm.js" ></script>&ndash;&gt;-->
+    <!--<script src="/static/scripts/controllers/login.js"></script>-->
     <title>管理界面起始页</title>
 </head>
 <body ms-controller="dailManage">

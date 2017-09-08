@@ -1,12 +1,12 @@
 
-require(["mmState"], function() {
+require(["mmstate"], function() {
     avalon.define({       //这个一定要写再里面
         $id     :       'dailManage'
     });
 
     avalon.state.config({
         onBeforeUnload: function (formstate, tostate) {
-            
+
         },
         onError: function() {
             console.log(arguments)
