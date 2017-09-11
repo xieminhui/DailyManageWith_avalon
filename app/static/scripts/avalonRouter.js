@@ -2,7 +2,7 @@
 
 require.config({
     paths: {
-        "mmState": "./avalon.oniui-master/mmRouter/mmState"
+        "mmState": "../mmRouter/mmState"
     }
 });
 require(["mmState"], function() {

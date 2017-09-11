@@ -1,12 +1,6 @@
 ///用于设置路由
-require.config({
-    baseUrl : "../../lib/avalon.oniui-master",
-    paths: {
-        "mmstate": "/mmRouter/mmState",
-        "simplegrid": "/simplegrid/avalon.simplegrid"
-    }
-});
-require(["mmstate"], function() {
+
+require(["./mmRouter/mmState"], function() {
     avalon.define({       //这个一定要写再里面
         $id     :       'adminIndex'
     });
@@ -197,7 +191,7 @@ var addSpendTypeVm = avalon.define({
 })
 
 //require表格simplegrid
-require(["simplegrid"], function () {
+require(["./smartgrid/avalon.smartgrid"], function () {
     function  getData(url) {
         var data = null;
         fetch(url,{
@@ -219,44 +213,16 @@ require(["simplegrid"], function () {
     }
 
     //查看所有类别
-    avalon.define({
-        $id : 'seeAlltype',
-        simplegrid : {
+    avalon.define("seeAlltype", function(vm){
+        vm.smartgrid = {
             columns : [
-                {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"},
-                {field: "Sort_name", text: "类别名", resizable: true, align: "center", width: "10%"},
-                {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"},
-                {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"}
+                {key: "Sort_id", name: "ID", sortable : true, align: "center", width: "10%"},
+                {key: "Sort_name", name: "类别名", sortable : true, align: "center", width: "10%"}
             ],
-            showRows: 10,
-            pageable: true,
-            pager: {
-                perPages: 20,
-                totalItems: 1000,
-                showPages: 5,
-                options: [10, 20, 30, 40]
-            },
+
             data : getData('/seeAlltype')
         }
+        vm.$skipArray = ["smartgrid"]
     })
-    // avalon.define("seeAlltype", function (vm) {
-    //     vm.simplegrid = {
-    //         columns : [
-    //             {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"},
-    //             {field: "Sort_name", text: "类别名", resizable: true, align: "center", width: "10%"},
-    //             {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"},
-    //             {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"}
-    //         ],
-    //         showRows: 10,
-    //         pageable: true,
-    //         pager: {
-    //             perPages: 20,
-    //             totalItems: 1000,
-    //             showPages: 5,
-    //             options: [10, 20, 30, 40]
-    //         },
-    //         data : getData('/seeAlltype')
-    //     }
-    // })
     avalon.scan();
 })

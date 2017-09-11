@@ -1,4 +1,4 @@
-//requirejs bulid
+//requirejs index 打包bulid
 ({
     basepath: 'static/scripts',
     paths : {

@@ -10,7 +10,7 @@ define(['require', './normalize'], function(req, normalize) {
     
     if (typeof process !== "undefined" && process.versions && !!process.versions.node && require.nodeRequire) {
       try {
-        var csso = require.nodeRequire('csso');
+        var csso = require.nodeRequirse('csso');
       }
       catch(e) {
         console.log('Compression module not installed. Use "npm install csso -g" to enable.');
