@@ -1,12 +1,12 @@
 <h1 class="page-header">添加消费支出</h1>
-<div class="row">
-    <form class="form-horizontal" role="form" name="addSpendForm" ng-submit="addspend(addSpendForm.$valid,$event)">
+<div class="row" ms-controller="addSpend">
+    <form class="form-horizontal" role="form" name="addSpendForm" ms-submit="addspend($event)">
         <div class="form-group">
             <label class="col-md-2 control-label">
                 购买者：
             </label>
             <div class="col-md-5">
-                <input type="text" class="form-control" placeholder="请输入人名……" ng-model="purchaser" id="purchaser" name="purchaser">
+                <input type="text" class="form-control" placeholder="请输入人名……" ms-duplex="formData.purchaser" id="purchaser" name="purchaser">
             </div>
         </div>
         <div class="form-group">
@@ -14,8 +14,8 @@
                 类别：
             </label>
             <div class="col-md-5">
-                <select id="basic" class="selectpicker show-tick form-control" ng-model="typeId">
-                    <option ng-repeat="type in types" value="{{type.Sort_id}}">{{type.Sort_name}}</option>
+                <select id="basic" class="selectpicker show-tick form-control" ms-duplex="formData.typeId">
+                    <option ms-repeat-el="typeArr" ms-attr-value="{{el.Sort_id}}">{{el.Sort_name}}</option>
                 </select>
             </div>
         </div>
@@ -24,7 +24,7 @@
                 价格：
             </label>
             <div class="col-md-5">
-                <input type="text" class="form-control" placeholder="请输入价格……" ng-model="price" id="price" name="price" required autofocus="">
+                <input type="text" class="form-control" placeholder="请输入价格……" ms-duplex="formData.price" id="price" name="price" required autofocus="">
             </div>
         </div>
         <div class="form-group">
@@ -32,7 +32,7 @@
                 地点：
             </label>
             <div class="col-md-5">
-                <input type="text" class="form-control" placeholder="请输入地点……" ng-model="purchaserPlace" id="purchaserPlace" name="purchaserPlace">
+                <input type="text" class="form-control" placeholder="请输入地点……" ms-duplex="formData.purchaserPlace" id="purchaserPlace" name="purchaserPlace">
             </div>
         </div>
         <div class="form-group">
@@ -40,7 +40,7 @@
                 时间：
             </label>
             <div class="col-md-5">
-                <input type="date" class="form-control" placeholder="请输入日期……" ng-model="purchaserDate" id="purchaserDate" name="purchaserDate">
+                <input type="date" class="form-control" placeholder="请输入日期……" ms-duplex="formData.purchaserDate" id="purchaserDate" name="purchaserDate">
             </div>
         </div>
         <div class="form-group">
@@ -48,7 +48,7 @@
                 数量：
             </label>
             <div class="col-md-5">
-                <input type="number" class="form-control" placeholder="请输入数量……" ng-model="currentNum" id="currentNum" name="currentNum">
+                <input type="number" class="form-control" placeholder="请输入数量……" ms-duplex="formData.currentNum" id="currentNum" name="currentNum">
             </div>
         </div>
         <div class="form-group">
@@ -56,7 +56,7 @@
                 简要介绍：
             </label>
             <div class="col-md-5">
-                <textarea class="form-control" rows="4" placeholder="请输入简要介绍……" ng-model="brief" id="brief" name="brief"></textarea>
+                <textarea class="form-control" rows="4" placeholder="请输入简要介绍……" ms-duplex="formData.brief" id="brief" name="brief"></textarea>
             </div>
         </div>
         <div class="form-group">

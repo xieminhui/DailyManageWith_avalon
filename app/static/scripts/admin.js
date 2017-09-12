@@ -3,7 +3,8 @@ require.config({
     baseUrl : "../../lib/avalon.oniui-master",
     paths: {
         "mmstate": "/mmRouter/mmState",
-        "simplegrid": "/simplegrid/avalon.simplegrid"
+        "simplegrid": "/simplegrid/avalon.simplegrid",
+        "mmRequest" : "/mmRequest/mmRequest"
     }
 });
 require(["mmstate"], function() {
@@ -164,6 +165,135 @@ var navCtrlVm = avalon.define({
     }
 });
 
+
+require(['mmRequest'], function () {
+
+    //查看所有类别
+    require(["simplegrid"], function () {
+        function getTypeData(url) {
+            avalon.ajax({
+                url : url,
+                dataType : 'json',
+                type :'get',
+                success :function (data) {
+                    var seeAlltypeVm = avalon.define("seeAlltype", function (vm){
+                        vm.len = data.length;
+                        for(var i=0;i<data.length;i++){
+                            var j =i;
+                            data[i].number = ++j;
+                        }
+                        vm.$simplegridA = {
+                            columns : [
+                                {field: 'number', text:'序号',align:"center",width:"10%"},
+                                {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"},
+                                {field: "Sort_name", text: "类别名", resizable: true, align: "center", width: "10%"}
+                            ],
+                            data :data
+                        };
+                        vm.$skipArray = ["simplegrid"];
+                    });
+                },
+                error :function () {
+                    alert('获取数据失败');
+                }
+            })
+        }
+        getTypeData('/seeAlltype');//异步的时候表格无法初始化，同步也不行
+
+        //查看消费类别
+        function getSpendData(url) {
+            avalon.ajax({
+                url : url,
+                dataType : 'json',
+                type :'get',
+                success :function (data) {
+                    var seeAllSpendVm = avalon.define("seeAllspend", function (vm){
+                        vm.total = data.length;
+                        for(var i=0;i<data.length;i++){
+                            var j =i;
+                            data[i].number = ++j;
+                        }
+                        vm.$simplegridB = {
+                            columns : [
+                                {field: 'number', text:'序号',align:"center",width:"10%"},
+                                {field: "id", text: "ID", resizable: true, align: "center", width: "10%"},
+                                {field: "purchaser", text: "购买者", resizable: true, align: "center", width: "10%"},
+                                {field: "Sort_name", text: "类别名", resizable: true, align: "center", width: "10%"},
+                                {field: "Price", text: "价格", resizable: true, align: "center", width: "10%"},
+                                {field: "purchaserPlace", text: "购买地点", resizable: true, align: "center", width: "10%"},
+                                {field: "purchaserDate", text: "购买日期", resizable: true, align: "center", width: "10%"},
+                                {field: "Current_num", text: "购买数量", resizable: true, align: "center", width: "10%"},
+                                {field: "Brief", text: "简介", resizable: true, align: "center", width: "10%"}
+                            ],
+                            data :data
+                        };
+                        vm.$skipArray = ["simplegrid"];
+                    });
+                },
+                error :function () {
+                    alert('获取数据失败');
+                }
+            })
+        }
+        getSpendData('/seeAllSpend');
+    })
+    //添加消费
+    var addSpendVm = avalon.define({
+        $id : "addSpend",
+        typeArr : [],
+        formData : {
+            purchaser: '',
+            typeId: '', //类别
+            price: '',
+            purchaserPlace: '',
+            purchaserDate: '',
+            currentNum: '',
+            brief: ''
+        },
+        gettypeArr :function () {
+            avalon.ajax({
+                url : '/seeAlltype',
+                dataType : 'json',
+                type :'get',
+                success :function (data) {
+                    addSpendVm.typeArr = data;
+                }
+            })
+        },
+        addspend : function (e) {
+            e.preventDefault();
+            addSpendVm.formData = {
+                purchaser: addSpendVm.formData.purchaser,
+                typeId: addSpendVm.formData.typeId, //类别
+                price: addSpendVm.formData.price,
+                purchaserPlace: addSpendVm.formData.purchaserPlace,
+                purchaserDate: addSpendVm.formData.purchaserDate,
+                currentNum: addSpendVm.formData.currentNum,
+                brief: addSpendVm.formData.brief
+            };
+            avalon.ajax({
+                url : '/addSpending',
+                dataType : 'json',
+                type :'post',
+                contentType	: "application/json",
+                data : JSON.stringify(addSpendVm.formData),
+                success :function (data) {
+                    alert(data.success);
+                    for(key in addSpendVm.formData){
+                        addSpendVm.formData[key]='';
+                    }
+                },
+                error :function () {
+                    alert('添加类别失败');
+                }
+            })
+        }
+    })
+    addSpendVm.gettypeArr();
+
+    avalon.scan();
+
+})
 //添加类别
 var addSpendTypeVm = avalon.define({
     $id : "addSpendType",
@@ -176,87 +306,20 @@ var addSpendTypeVm = avalon.define({
         var formData = {
             typeName: addSpendTypeVm.typeName
         };
-        fetch('/addSpendType',{
-            method: 'POST',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(formData)
-        }).then(function successCallback(response) {
-            if (response.status === 200) {
+        avalon.ajax({
+            url : '/addSpendType',
+            dataType : 'json',
+            type :'post',
+            contentType	: "application/json",
+            data : JSON.stringify(formData),
+            success :function (data) {
+                alert(data.success);
                 addSpendTypeVm.typeName = "";
-                response.json().then(function(data) {
-                    alert(data.success);
-                });
-            }
-        }, function errorCallback(response) {
-            alert("添加类别失败");
-        });
-    }
-})
-
-//require表格simplegrid
-require(["simplegrid"], function () {
-    function  getData(url) {
-        var data = null;
-        fetch(url,{
-            method: 'get',
-            headers: {
-                'Accept': 'application/json'
-            }
-        }).then(function successCallback(response) {
-            if (response.status === 200) {
-                addSpendTypeVm.typeName = "";
-                response.json().then(function(data) {
-                    data = data;
-                });
-            }
-        }, function errorCallback(response) {
-            alert("获取数据失败");
-        });
-        return data;
-    }
-
-    //查看所有类别
-    avalon.define({
-        $id : 'seeAlltype',
-        simplegrid : {
-            columns : [
-                {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"},
-                {field: "Sort_name", text: "类别名", resizable: true, align: "center", width: "10%"},
-                {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"},
-                {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"}
-            ],
-            showRows: 10,
-            pageable: true,
-            pager: {
-                perPages: 20,
-                totalItems: 1000,
-                showPages: 5,
-                options: [10, 20, 30, 40]
             },
-            data : getData('/seeAlltype')
-        }
-    })
-    // avalon.define("seeAlltype", function (vm) {
-    //     vm.simplegrid = {
-    //         columns : [
-    //             {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"},
-    //             {field: "Sort_name", text: "类别名", resizable: true, align: "center", width: "10%"},
-    //             {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"},
-    //             {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"}
-    //         ],
-    //         showRows: 10,
-    //         pageable: true,
-    //         pager: {
-    //             perPages: 20,
-    //             totalItems: 1000,
-    //             showPages: 5,
-    //             options: [10, 20, 30, 40]
-    //         },
-    //         data : getData('/seeAlltype')
-    //     }
-    // })
-    avalon.scan();
-})
+            error :function () {
+                alert('添加类别失败');
+            }
+        })
+    }
+});
+

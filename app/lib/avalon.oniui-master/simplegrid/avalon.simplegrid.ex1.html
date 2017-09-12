@@ -24,7 +24,7 @@
                     return s + Math.floor((b - s) * Math.random())
                 }
                 var testVM = avalon.define("test", function(vm) {
-                    vm.$skipArray = ["pagerVM"]
+                    vm.$skipArray = ["pagerVM"];
                     vm.$simplegridAOpts = {
                         columns: ["symbol", "price", "change"],
                         data: getData(10)
