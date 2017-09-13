@@ -7092,6 +7092,1279 @@ define('mmRouter/mmState',["./mmPromise", "./mmRouter"], function () {
     }
 })
 ;
+define('mmPromise/mmPromise',["avalon"], function (avalon) {
+//chrome36的原生Promise还多了一个defer()静态方法，允许不通过传参就能生成Promise实例，
+//另还多了一个chain(onSuccess, onFail)原型方法，意义不明
+//目前，firefox24, opera19也支持原生Promise(chrome32就支持了，但需要打开开关，自36起直接可用)
+//本模块提供的Promise完整实现ECMA262v6 的Promise规范
+//2015.3.12 支持async属性
+    function ok(val) {
+        return val
+    }
+    function ng(e) {
+        throw e
+    }
+
+    function done(onSuccess) {//添加成功回调
+        return this.then(onSuccess, ng)
+    }
+    function fail(onFail) {//添加出错回调
+        return this.then(ok, onFail)
+    }
+    function defer() {
+        var ret = {};
+        ret.promise = new this(function (resolve, reject) {
+            ret.resolve = resolve
+            ret.reject = reject
+        });
+        return ret
+    }
+    var msPromise = function (executor) {
+        this._callbacks = []
+        var me = this
+        if (typeof this !== "object")
+            throw new TypeError("Promises must be constructed via new")
+        if (typeof executor !== "function")
+            throw new TypeError("not a function")
+
+        executor(function (value) {
+            _resolve(me, value)
+        }, function (reason) {
+            _reject(me, reason)
+        })
+    }
+    function fireCallbacks(promise, fn) {
+        if (typeof promise.async === "boolean") {
+            var isAsync = promise.async
+        } else {
+            isAsync = promise.async = true
+        }
+        if (isAsync) {
+            window.setTimeout(fn, 0)
+        } else {
+            fn()
+        }
+    }
+//返回一个已经处于`resolved`状态的Promise对象
+    msPromise.resolve = function (value) {
+        return new msPromise(function (resolve) {
+            resolve(value)
+        })
+    }
+//返回一个已经处于`rejected`状态的Promise对象
+    msPromise.reject = function (reason) {
+        return new msPromise(function (resolve, reject) {
+            reject(reason)
+        })
+    }
+
+    msPromise.prototype = {
+//一个Promise对象一共有3个状态：
+//- `pending`：还处在等待状态，并没有明确最终结果
+//- `resolved`：任务已经完成，处在成功状态
+//- `rejected`：任务已经完成，处在失败状态
+        constructor: msPromise,
+        _state: "pending",
+        _fired: false, //判定是否已经被触发
+        _fire: function (onSuccess, onFail) {
+            if (this._state === "rejected") {
+                if (typeof onFail === "function") {
+                    onFail(this._value)
+                } else {
+                    throw this._value
+                }
+            } else {
+                if (typeof onSuccess === "function") {
+                    onSuccess(this._value)
+                }
+            }
+        },
+        _then: function (onSuccess, onFail) {
+            if (this._fired) {//在已有Promise上添加回调
+                var me = this
+                fireCallbacks(me, function () {
+                    me._fire(onSuccess, onFail)
+                });
+            } else {
+                this._callbacks.push({onSuccess: onSuccess, onFail: onFail})
+            }
+        },
+        then: function (onSuccess, onFail) {
+            onSuccess = typeof onSuccess === "function" ? onSuccess : ok
+            onFail = typeof onFail === "function" ? onFail : ng
+            var me = this//在新的Promise上添加回调
+            var nextPromise = new msPromise(function (resolve, reject) {
+                me._then(function (value) {
+                    try {
+                        value = onSuccess(value)
+                    } catch (e) {
+                        // https://promisesaplus.com/#point-55
+                        reject(e)
+                        return
+                    }
+                    resolve(value)
+                }, function (value) {
+                    try {
+                        value = onFail(value)
+                    } catch (e) {
+                        reject(e)
+                        return
+                    }
+                    resolve(value)
+                })
+            })
+            for (var i in me) {
+                if (!personal[i]) {
+                    nextPromise[i] = me[i]
+                }
+            }
+            return nextPromise
+        },
+        "done": done,
+        "catch": fail,
+        "fail": fail
+    }
+    var personal = {
+        _state: 1,
+        _fired: 1,
+        _value: 1,
+        _callbacks: 1
+    }
+    function _resolve(promise, value) {//触发成功回调
+        if (promise._state !== "pending")
+            return;
+        if (value && typeof value.then === "function") {
+//thenable对象使用then，Promise实例使用_then
+            var method = value instanceof msPromise ? "_then" : "then"
+            value[method](function (val) {
+                _transmit(promise, val, true)
+            }, function (reason) {
+                _transmit(promise, reason, false)
+            });
+        } else {
+            _transmit(promise, value, true);
+        }
+    }
+    function _reject(promise, value) {//触发失败回调
+        if (promise._state !== "pending")
+            return
+        _transmit(promise, value, false)
+    }
+//改变Promise的_fired值，并保持用户传参，触发所有回调
+    function _transmit(promise, value, isResolved) {
+        promise._fired = true;
+        promise._value = value;
+        promise._state = isResolved ? "fulfilled" : "rejected"
+        fireCallbacks(promise, function () {
+            promise._callbacks.forEach(function (data) {
+                promise._fire(data.onSuccess, data.onFail);
+            })
+        })
+    }
+    function _some(any, iterable) {
+        iterable = Array.isArray(iterable) ? iterable : []
+        var n = 0, result = [], end
+        return new msPromise(function (resolve, reject) {
+            // 空数组直接resolve
+            if (!iterable.length)
+                resolve(result)
+            function loop(a, index) {
+                a.then(function (ret) {
+                    if (!end) {
+                        result[index] = ret//保证回调的顺序
+                        n++
+                        if (any || n >= iterable.length) {
+                            resolve(any ? ret : result)
+                            end = true
+                        }
+                    }
+                }, function (e) {
+                    end = true
+                    reject(e)
+                })
+            }
+            for (var i = 0, l = iterable.length; i < l; i++) {
+                loop(iterable[i], i)
+            }
+        })
+    }
+
+    msPromise.all = function (iterable) {
+        return _some(false, iterable)
+    }
+    msPromise.race = function (iterable) {
+        return _some(true, iterable)
+    }
+    msPromise.defer = defer
+
+
+
+    avalon.Promise = msPromise
+    var nativePromise = window.Promise
+    if (/native code/.test(nativePromise)) {
+        nativePromise.prototype.done = done
+        nativePromise.prototype.fail = fail
+        if (!nativePromise.defer) { //chrome实现的私有方法
+            nativePromise.defer = defer
+        }
+    }
+    return window.Promise = nativePromise || msPromise
+
+})
+//https://github.com/ecomfe/er/blob/master/src/Deferred.js
+//http://jser.info/post/77696682011/es6-promises
+;
+//=========================================
+//  数据交互模块 by 司徒正美
+//  版本: 1.0.0
+//  最近更新: 2015/4/30
+//==========================================
+define('mmRequest/mmRequest',["avalon", "../mmPromise/mmPromise"], function(avalon) {
+    var global = window
+    var DOC = global.document
+    var encode = encodeURIComponent
+    var decode = decodeURIComponent
+
+    var rlocalProtocol = /^(?:about|app|app-storage|.+-extension|file|res|widget):$/
+    var rheaders = /^(.*?):[ \t]*([^\r\n]*)\r?$/mg
+    var rnoContent = /^(?:GET|HEAD)$/
+    var rprotocol = /^\/\//
+    var rhash = /#.*$/
+    var rquery = /\?/
+    var rjsonp = /(=)\?(?=&|$)|\?\?/
+    var r20 = /%20/g
+    var radd = /\+/g
+    var r5b5d = /%5B(.*?)%5D$/;
+
+    var originAnchor = document.createElement("a")
+    originAnchor.href = location.href
+    //告诉WEB服务器自己接受什么介质类型，*/* 表示任何类型，type/* 表示该类型下的所有子类型，type/sub-type。
+    var accepts = {
+        xml: "application/xml, text/xml",
+        html: "text/html",
+        text: "text/plain",
+        json: "application/json, text/javascript",
+        script: "text/javascript, application/javascript",
+        "*": ["*/"] + ["*"] //避免被压缩掉
+    }
+
+    function IE() {
+        if (window.VBArray) {
+            var mode = document.documentMode
+            return mode ? mode : window.XMLHttpRequest ? 7 : 6
+        } else {
+            return 0
+        }
+    }
+    var useOnload = IE() === 0 || IE() > 8
+
+    function parseJS(code) {
+        var indirect = eval
+        code = code.trim()
+        if (code) {
+            if (code.indexOf("use strict") === 1) {
+                var script = document.createElement("script")
+                script.text = code;
+                head.appendChild(script).parentNode.removeChild(script)
+            } else {
+                indirect(code)
+            }
+        }
+    }
+
+    if (!String.prototype.startsWith) {
+        String.prototype.startsWith = function(searchString, position) {
+            position = position || 0;
+            return this.lastIndexOf(searchString, position) === position;
+        }
+    }
+
+    var head = DOC.getElementsByTagName("head")[0] //HEAD元素
+    var isLocal = false
+    try {
+        //在IE下如果重置了document.domain，直接访问window.location会抛错，但用document.URL就ok了
+        //http://www.cnblogs.com/WuQiang/archive/2012/09/21/2697474.html
+        isLocal = rlocalProtocol.test(location.protocol)
+    } catch (e) {
+    }
+
+    new function() {
+        //http://www.cnblogs.com/rubylouvre/archive/2010/04/20/1716486.html
+        var s = ["XMLHttpRequest",
+            "ActiveXObject('MSXML2.XMLHTTP.6.0')",
+            "ActiveXObject('MSXML2.XMLHTTP.3.0')",
+            "ActiveXObject('MSXML2.XMLHTTP')",
+            "ActiveXObject('Microsoft.XMLHTTP')"
+        ]
+        s[0] = IE() < 8 && IE() !== 0 && isLocal ? "!" : s[0] //IE下只能使用ActiveXObject
+        for (var i = 0, axo; axo = s[i++];) {
+            try {
+                if (eval("new " + axo)) {
+                    avalon.xhr = new Function("return new " + axo)
+                    break;
+                }
+            } catch (e) {
+            }
+        }}
+    var supportCors = "withCredentials" in avalon.xhr()
+
+
+
+
+    function parseXML(data, xml, tmp) {
+        try {
+            var mode = document.documentMode
+            if (window.DOMParser && (!mode || mode > 8)) { // Standard
+                tmp = new DOMParser()
+                xml = tmp.parseFromString(data, "text/xml")
+            } else { // IE
+                xml = new ActiveXObject("Microsoft.XMLDOM") //"Microsoft.XMLDOM"
+                xml.async = "false";
+                xml.loadXML(data)
+            }
+        } catch (e) {
+        xml = void  0
+        }
+        if (!xml || !xml.documentElement || xml.getElementsByTagName("parsererror").length) {
+            avalon.error("Invalid XML: " + data)
+        }
+        return xml
+    }
+
+    //ajaxExtend是一个非常重要的内部方法，负责将用法参数进行规整化
+    //1. data转换为字符串
+    //2. type转换为大写
+    //3. url正常化，加querystring, 加时间戮
+    //4. 判定有没有跨域
+    //5. 添加hasContent参数
+    var defaults = {
+        type: "GET",
+        contentType: "application/x-www-form-urlencoded; charset=UTF-8",
+        async: true,
+        jsonp: "callback"
+    }
+    function ajaxExtend(opts) {
+        opts = avalon.mix({}, defaults, opts)
+        opts.type = opts.type.toUpperCase()
+        var querystring = typeof opts.data === "string" ? opts.data : avalon.param(opts.data)
+        opts.querystring = querystring || ""
+        opts.url = opts.url.replace(rhash, "").replace(rprotocol, location.protocol + "//")
+
+        if (typeof opts.crossDomain !== "boolean") { //判定是否跨域
+            var urlAnchor = document.createElement("a");
+            // Support: IE6-11+
+            // IE throws exception if url is malformed, e.g. http://example.com:80x/
+            try {
+                urlAnchor.href = opts.url;
+                // in IE7-, get the absolute path
+                var absUrl = !"1"[0] ? urlAnchor.getAttribute("href", 4) : urlAnchor.href;
+                urlAnchor.href = absUrl
+                opts.crossDomain = originAnchor.protocol + "//" + originAnchor.host !== urlAnchor.protocol + "//" + urlAnchor.host;
+            } catch (e) {
+            opts.crossDomain = true;
+            }
+        }
+        opts.hasContent = !rnoContent.test(opts.type) //是否为post请求
+        if (!opts.hasContent) {
+            if (querystring) { //如果为GET请求,则参数依附于url上
+                opts.url += (rquery.test(opts.url) ? "&" : "?") + querystring;
+            }
+            if (opts.cache === false) { //添加时间截
+                opts.url += (rquery.test(opts.url) ? "&" : "?") + "_time=" + (new Date() - 0)
+            }
+        }
+        return opts;
+    }
+    /**
+     * 伪XMLHttpRequest类,用于屏蔽浏览器差异性
+     * var ajax = new(self.XMLHttpRequest||ActiveXObject)("Microsoft.XMLHTTP")
+     * ajax.onreadystatechange = function(){
+     *   if (ajax.readyState==4 && ajax.status==200){
+     *        alert(ajax.responseText)
+     *   }
+     * }
+     * ajax.open("POST", url, true) 
+     * ajax.send("key=val&key1=val2") 
+     */
+    var XHRMethods = {
+        setRequestHeader: function(name, value) {
+            this.requestHeaders[name] = value;
+            return this;
+        },
+        getAllResponseHeaders: function() {
+            return this.readyState === 4 ? this.responseHeadersString : null;
+        },
+        getResponseHeader: function(name, match) {
+            if (this.readyState === 4) {
+                while ((match = rheaders.exec(this.responseHeadersString))) {
+                    this.responseHeaders[match[1]] = match[2];
+                }
+                match = this.responseHeaders[name];
+            }
+            return match === undefined ? null : match;
+        },
+        overrideMimeType: function(type) {
+            this.mimeType = type;
+            return this;
+        },
+        // 中止请求
+        abort: function(statusText) {
+            statusText = statusText || "abort";
+            if (this.transport) {
+                this.respond(0, statusText)
+            }
+            return this;
+        },
+        /**
+         * 用于派发success,error,complete等回调
+         * http://www.cnblogs.com/rubylouvre/archive/2011/05/18/2049989.html
+         * @param {Number} status 状态码
+         * @param {String} statusText 对应的扼要描述
+         */
+        dispatch: function(status, nativeStatusText) {
+            var statusText = nativeStatusText
+            // 只能执行一次，防止重复执行
+            if (!this.transport) { //2:已执行回调
+                return
+            }
+            this.readyState = 4
+            var isSuccess = status >= 200 && status < 300 || status === 304
+            if (isSuccess) {
+                if (status === 204) {
+                    statusText = "nocontent"
+                } else if (status === 304) {
+                    statusText = "notmodified"
+                } else {
+                    //如果浏览器能直接返回转换好的数据就最好不过,否则需要手动转换
+                    if (typeof this.response === "undefined") {
+                        var dataType = this.options.dataType || this.options.mimeType
+                        if (!dataType && this.responseText || this.responseXML) { //如果没有指定dataType，则根据mimeType或Content-Type进行揣测
+                            dataType = this.getResponseHeader("Content-Type") || ""
+                            dataType = dataType.match(/json|xml|script|html/i) || ["text"]
+                            dataType = dataType[0].toLowerCase()
+                        }
+                        var responseText = this.responseText || '',
+                            responseXML = this.responseXML || ''
+                        try {
+                            this.response = avalon.ajaxConverters[dataType].call(this, responseText, responseXML)
+                        } catch (e) {
+                        isSuccess = false
+                        this.error = e
+                        statusText = "parsererror"
+                        }
+                    }
+                }
+            }
+            this.status = status;
+            this.statusText = statusText + ""
+            if (this.timeoutID) {
+                clearTimeout(this.timeoutID)
+                delete this.timeoutID
+            }
+            this._transport = this.transport
+
+            /**
+             * global event handler
+             */
+            var that = this
+
+            // 到这要么成功，调用success, 要么失败，调用 error, 最终都会调用 complete
+            if (isSuccess) {
+                this._resolve([this.response, statusText, this])
+                /**
+                 * global event handler
+                 */
+                window.setTimeout(function() {
+                    avalon.ajaxGlobalEvents.success(that, that.options, that.response)
+                }, 0)
+            } else {
+                this._reject([this, statusText, this.error])
+                /**
+                 * global event handler
+                 */
+                window.setTimeout(function() {
+                    avalon.ajaxGlobalEvents.error(that, that.options, statusText)
+                }, 0)
+            }
+            delete this.transport
+
+            /**
+             * global event handler
+             */
+            ajaxActive--
+
+            window.setTimeout(function() {
+                avalon.ajaxGlobalEvents.complete(that, that.options)
+            }, 0)
+
+            if (ajaxActive === 0) {
+                // 最后一个
+                window.setTimeout(function() {
+                    avalon.ajaxGlobalEvents.stop()
+                }, 0)
+            }
+
+        }
+    }
+    /**
+     * global event handler
+     */
+    // 记录当前活跃的 ajax 数
+    var ajaxActive = 0
+
+    //ajax主函数
+    avalon.ajax = function(opts, promise) {
+        if (!opts || !opts.url) {
+            avalon.error("参数必须为Object并且拥有url属性")
+        }
+        opts = ajaxExtend(opts) //处理用户参数，比如生成querystring, type大写化
+        //创建一个伪XMLHttpRequest,能处理complete,success,error等多投事件
+        var XHRProperties = {
+            responseHeadersString: "",
+            responseHeaders: {},
+            requestHeaders: {},
+            querystring: opts.querystring,
+            readyState: 0,
+            uniqueID: ("" + Math.random()).replace(/0\./, ""),
+            status: 0
+        }
+        var _reject, _resolve
+        var promise = new avalon.Promise(function(resolve, reject) {
+            _resolve = resolve
+            _reject = reject
+        })
+
+        promise.options = opts
+        promise._reject = _reject
+        promise._resolve = _resolve
+
+        var doneList = [],
+            failList = []
+
+        Array("done", "fail", "always").forEach(function(method) {
+            promise[method] = function(fn) {
+                if (typeof fn === "function") {
+                    if (method !== "fail")
+                        doneList.push(fn)
+                    if (method !== "done")
+                        failList.push(fn)
+                }
+                return this
+            }
+        })
+
+        var isSync = opts.async === false
+        if (isSync) {
+            avalon.log("warnning:与jquery1.8一样,async:false这配置已经被废弃")
+            promise.async = false
+        }
+
+
+        avalon.mix(promise, XHRProperties, XHRMethods)
+
+        promise.then(function(value) {
+            value = Array.isArray(value) ? value : value === void 0 ? [] : [value]
+            for (var i = 0, fn; fn = doneList[i++];) {
+                fn.apply(promise, value)
+            }
+            return value
+        }, function(value) {
+            value = Array.isArray(value) ? value : value === void 0 ? [] : [value]
+            for (var i = 0, fn; fn = failList[i++];) {
+                fn.apply(promise, value)
+            }
+            return value
+        })
+
+
+        promise.done(opts.success).fail(opts.error).always(opts.complete)
+
+        var dataType = opts.dataType //目标返回数据类型
+        var transports = avalon.ajaxTransports
+
+        if ((opts.crossDomain && !supportCors || rjsonp.test(opts.url)) && dataType === "json" && opts.type === "GET") {
+            dataType = opts.dataType = "jsonp"
+        }
+        var name = opts.form ? "upload" : dataType
+        var transport = transports[name] || transports.xhr
+        avalon.mix(promise, transport) //取得传送器的request, respond, preproccess
+        if (promise.preproccess) { //这用于jsonp upload传送器
+            dataType = promise.preproccess() || dataType
+        }
+        //设置首部 1、Content-Type首部
+        if (opts.contentType) {
+            promise.setRequestHeader("Content-Type", opts.contentType)
+        }
+        //2.处理Accept首部
+        promise.setRequestHeader("Accept", accepts[dataType] ? accepts[dataType] + ", */*; q=0.01" : accepts["*"])
+        for (var i in opts.headers) { //3. 处理headers里面的首部
+            promise.setRequestHeader(i, opts.headers[i])
+        }
+        // 4.处理超时
+        if (opts.async && opts.timeout > 0) {
+            promise.timeoutID = setTimeout(function() {
+                promise.abort("timeout")
+                promise.dispatch(0, "timeout")
+            }, opts.timeout)
+        }
+
+        /**
+         * global event handler
+         */
+        if (ajaxActive === 0) {
+            // 第一个
+            avalon.ajaxGlobalEvents.start()
+        }
+        avalon.ajaxGlobalEvents.send(promise, opts)
+        ajaxActive++
+
+
+
+        promise.request()
+        return promise
+    };
+    "get,post".replace(avalon.rword, function(method) {
+        avalon[method] = function(url, data, callback, type) {
+            if (typeof data === "function") {
+                type = type || callback
+                callback = data
+                data = void 0
+            }
+            return avalon.ajax({
+                type: method,
+                url: url,
+                data: data,
+                success: callback,
+                dataType: type
+            })
+        };
+    })
+    function ok(val) {
+        return val
+    }
+    function ng(e) {
+        throw e
+    }
+    avalon.getScript = function(url, callback) {
+        return avalon.get(url, null, callback, "script")
+    }
+    avalon.getJSON = function(url, data, callback) {
+        return avalon.get(url, data, callback, "json")
+    }
+    avalon.upload = function(url, form, data, callback, dataType) {
+        if (typeof data === "function") {
+            dataType = callback;
+            callback = data;
+            data = void 0;
+        }
+        return avalon.ajax({
+            url: url,
+            type: "post",
+            dataType: dataType,
+            form: form,
+            data: data,
+            success: callback
+        });
+    }
+
+
+    /**
+     * global event handler
+     */
+    avalon.ajaxGlobalEvents = {};
+
+    ["start", "stop", "complete", "error", "success", "send"].forEach(function(method) {
+        avalon.ajaxGlobalEvents[method] = avalon.noop
+    })
+
+    avalon.ajaxConverters = { //转换器，返回用户想要做的数据
+        text: function(text) {
+            // return text || "";
+            return text;
+        },
+        xml: function(text, xml) {
+            return xml !== void 0 ? xml : parseXML(text)
+        },
+        html: function(text) {
+            return avalon.parseHTML(text) //一个文档碎片,方便直接插入DOM树
+        },
+        json: function(text) {
+            if (!avalon.parseJSON) {
+                avalon.log("avalon.parseJSON不存在,请升级到最新版")
+            }
+            return avalon.parseJSON(text)
+        },
+        script: function(text) {
+            parseJS(text)
+            return text;
+        },
+        jsonp: function() {
+            var json, callbackName;
+            if (this.jsonpCallback.startsWith('avalon.')) {
+                callbackName = this.jsonpCallback.replace(/avalon\./, '')
+                json = avalon[callbackName]
+                delete avalon[callbackName]
+            } else {
+                json = window[this.jsonpCallback]
+            }
+            return json;
+        }
+    }
+
+    var rbracket = /\[\]$/
+    avalon.param = function(obj) {
+        var prefix,
+            s = [],
+            add = function(key, value) {
+                // If value is a function, invoke it and return its value
+                value = typeof value === "function" ? value() : (value == null ? "" : value);
+                s[s.length] = encodeURIComponent(key) + "=" + encodeURIComponent(value);
+        }
+        // 处理数组与类数组的jquery对象
+        if (Array.isArray(obj)) {
+            // Serialize the form elements
+            avalon.each(obj, add)
+
+        } else {
+            for (prefix in obj) {
+                paramInner(prefix, obj[prefix], add);
+            }
+        }
+
+        // Return the resulting serialization
+        return s.join("&").replace(r20, "+");
+    }
+
+    function paramInner(prefix, obj, add) {
+        var name;
+        if (Array.isArray(obj)) {
+            // Serialize array item.
+            avalon.each(obj, function(i, v) {
+                if (rbracket.test(prefix)) {
+                    // Treat each array item as a scalar.
+                    add(prefix, v);
+                } else {
+                    // Item is non-scalar (array or object), encode its numeric index.
+                    paramInner(
+                        prefix + "[" + (typeof v === "object" ? i : "") + "]",
+                        v,
+                        add);
+                }
+            });
+        } else if (avalon.isPlainObject(obj)) {
+            // Serialize object item.
+            for (name in obj) {
+                paramInner(prefix + "[" + name + "]", obj[name], add);
+            }
+
+        } else {
+            // Serialize scalar item.
+            add(prefix, obj);
+        }
+    }
+    //将一个字符串转换为对象
+    function tryDecodeURIComponent(value) {
+        try {
+            return decodeURIComponent(value);
+        } catch (e) {
+        return value
+        }
+    }
+
+
+    //a%5B0%5D%5Bvalue%5D a%5B1%5D%5B%5D
+    function addSubObject(host, text, value) {
+        var match = text.match(r5b5d)
+        if (!match) {
+            return true
+        }
+
+        var steps = []
+        var first = true
+        var step, index, key
+        while (index = text.lastIndexOf("%5B")) {
+            if (index === -1) {
+                break
+            }
+            key = text.slice(index).slice(3, -3)
+            text = text.slice(0, index)
+            if (key === "") {
+                steps.unshift({
+                    action: "pushArrayElement"
+                })
+            } else if ((key >>> 0) + "" === key) {
+                steps.unshift({
+                    action: "setSubArray",
+                    value: key
+                })
+            } else {
+                if (first) {
+                    steps.unshift({
+                        action: "setObjectProperty",
+                        value: tryDecodeURIComponent(key)
+                    })
+                } else {
+                    steps.unshift({
+                        action: "setSubObjet",
+                        value: tryDecodeURIComponent(key)
+                    })
+                }
+            }
+            first = false
+        }
+        first = true
+        while (step = steps.shift()) {
+            var isObject = /Object/.test(step.action)
+            if (first) {
+                if (!(text in host)) {
+                    host[text] = isObject ? {} : []
+                }
+                first = false
+                host = host[text]
+            }
+            switch (step.action) {
+                case "pushArrayElement":
+                    host.push(value)
+                    break
+                case "setObjectProperty":
+                    host[step.value] = value
+                    break
+                case "setSubObjet":
+                    if (!(step.value in host)) {
+                        host[step.value] = {}
+                    }
+                    host = host[step.value]
+                    break
+                case "setSubArray":
+                    if (!(step.value in host)) {
+                        host[step.value] = []
+                    }
+                    host = host[step.value]
+                    break
+            }
+        }
+    }
+    //  function add
+    avalon.unparam = function(qs, sep, eq) {
+        sep = sep || '&';
+        eq = eq || '=';
+        var obj = {};
+        if ((typeof qs !== "string") || qs.length === 0) {
+            return obj;
+        }
+        if (qs.indexOf("?") !== -1) {
+            qs = qs.split("?").pop()
+        }
+        var array = qs.split(sep);
+        for (var i = 0, el; el = array[i++];) {
+            var arr = el.split("=")
+            if (arr.length === 1) { //处理只有键名没键值的情况
+                obj[arr[0]] = ""
+            } else {
+                var key = arr[0].replace(radd, '%20')
+                var v = tryDecodeURIComponent(arr.slice(1).join("=").replace(radd, ' '));
+                if (addSubObject(obj, key, v)) { //处理存在中括号的情况
+                    var k = tryDecodeURIComponent(key) //处理不存在中括号的简单的情况
+                    if (!Object.prototype.hasOwnProperty.call(obj, k)) {
+                        obj[k] = v;
+                    } else if (Array.isArray(obj[k])) {
+                        obj[k].push(v);
+                    } else {
+                        obj[k] = [obj[k], v];
+                    }
+                }
+            }
+        }
+
+        return obj
+    }
+    var rinput = /select|input|button|textarea/i
+    var rcheckbox = /radio|checkbox/
+    var rline = /\r?\n/g
+    function trimLine(val) {
+        return val.replace(rline, "\r\n")
+    }
+    //表单元素变字符串, form为一个元素节点
+    avalon.serialize = function(form) {
+        var json = {};
+        // 不直接转换form.elements，防止以下情况：   <form > <input name="elements"/><input name="test"/></form>
+        Array.prototype.filter.call(form.getElementsByTagName("*"), function(el) {
+            if (rinput.test(el.nodeName) && el.name && !el.disabled) {
+                return rcheckbox.test(el.type) ? el.checked : true //只处理拥有name并且没有disabled的表单元素
+            }
+        }).forEach(function(el) {
+            var val = avalon(el).val()
+            val = Array.isArray(val) ? val.map(trimLine) : trimLine(val)
+            var name = el.name
+            if (name in json) {
+                if (Array.isArray(val)) {
+                    json[name].push(val)
+                } else {
+                    json[name] = [json[name], val]
+                }
+            } else {
+                json[name] = val
+            }
+        })
+        return avalon.param(json, false) // 名值键值对序列化,数组元素名字前不加 []
+    }
+
+    var transports = avalon.ajaxTransports = {
+        xhr: {
+            //发送请求
+            request: function() {
+                var self = this;
+                var opts = this.options;
+                var transport = this.transport = new avalon.xhr;
+                transport.open(opts.type, opts.url, opts.async, opts.username, opts.password)
+                if (this.mimeType && transport.overrideMimeType) {
+                    transport.overrideMimeType(this.mimeType)
+                }
+                //IE6下，如果transport中没有withCredentials，直接设置会报错
+                if (opts.crossDomain && "withCredentials" in transport) {
+                    transport.withCredentials = true
+                }
+
+                /*
+                 * header 中设置 X-Requested-With 用来给后端做标示：
+                 * 这是一个 ajax 请求。
+                 *
+                 * 在 Chrome、Firefox 3.5+ 和 Safari 4+ 下，
+                 * 在进行跨域请求时设置自定义 header，会触发 preflighted requests，
+                 * 会预先发送 method 为 OPTIONS 的请求。
+                 *
+                 * 于是，如果跨域，禁用此功能。
+                 */
+                if (!opts.crossDomain) {
+                    this.requestHeaders["X-Requested-With"] = "XMLHttpRequest"
+                }
+
+                for (var i in this.requestHeaders) {
+                    transport.setRequestHeader(i, this.requestHeaders[i] + "")
+                }
+
+                /*
+                 * progress
+                 */
+                if (opts.progressCallback) {
+                    // 判断是否 ie6-9
+                    var isOldIE = document.all && !window.atob;
+                    if (!isOldIE) {
+                        transport.upload.onprogress = opts.progressCallback
+                    }
+                }
+
+                var dataType = opts.dataType
+                if ("responseType" in transport && /^(blob|arraybuffer|text)$/.test(dataType)) {
+                    transport.responseType = dataType
+                    this.useResponseType = true
+                }
+                //必须要支持 FormData 和 file.fileList 的浏览器 才能用 xhr 发送
+                //标准规定的 multipart/form-data 发送必须用 utf-8 格式， 记得 ie 会受到 document.charset 的影响
+                transport.send(opts.hasContent && (this.formdata || this.querystring) || null)
+                //在同步模式中,IE6,7可能会直接从缓存中读取数据而不会发出请求,因此我们需要手动发出请求
+
+                if (!opts.async || transport.readyState === 4) {
+                    this.respond()
+                } else {
+                    if (useOnload) { //如果支持onerror, onload新API
+                        transport.onload = transport.onerror = function(e) {
+                            this.readyState = 4 //IE9+
+                            this.status = e.type === "load" ? 200 : 500
+                            self.respond()
+                        }
+                    } else {
+                        transport.onreadystatechange = function() {
+                            self.respond()
+                        }
+                    }
+                }
+            },
+            //用于获取原始的responseXMLresponseText 修正status statusText
+            //第二个参数为1时中止清求
+            respond: function(event, forceAbort) {
+                var transport = this.transport
+                if (!transport) {
+                    return
+                }
+                // by zilong：避免abort后还继续派发onerror等事件
+                if (forceAbort && this.timeoutID) {
+                    clearTimeout(this.timeoutID);
+                    delete this.timeoutID
+                }
+                try {
+                    var completed = transport.readyState === 4
+                    if (forceAbort || completed) {
+                        transport.onreadystatechange = avalon.noop
+                        if (useOnload) { //IE6下对XHR对象设置onerror属性可能报错
+                            transport.onerror = transport.onload = null
+                        }
+                        if (forceAbort) {
+                            if (!completed && typeof transport.abort === "function") { // 完成以后 abort 不要调用
+                                transport.abort()
+                            }
+                        } else {
+                            var status = transport.status
+                            //设置responseText
+                            var text = transport.responseText
+
+                            this.responseText = typeof text === "string" ? text : void 0
+                            //设置responseXML
+                            try {
+                                //当responseXML为[Exception: DOMException]时，
+                                //访问它会抛“An attempt was made to use an object that is not, or is no longer, usable”异常
+                                var xml = transport.responseXML
+                                this.responseXML = xml.documentElement
+                            } catch (e) {
+                            }
+                            //设置response
+                            if (this.useResponseType) {
+                                this.response = transport.response
+                            }
+                            //设置responseHeadersString
+                            this.responseHeadersString = transport.getAllResponseHeaders()
+
+                            try { //火狐在跨城请求时访问statusText值会抛出异常
+                                var statusText = transport.statusText
+                            } catch (e) {
+                            this.error = e
+                            statusText = "firefoxAccessError"
+                            }
+                            //用于处理特殊情况,如果是一个本地请求,只要我们能获取数据就假当它是成功的
+                            if (!status && isLocal && !this.options.crossDomain) {
+                                status = this.responseText ? 200 : 404
+                            //IE有时会把204当作为1223
+                            } else if (status === 1223) {
+                                status = 204
+                            }
+                            this.dispatch(status, statusText)
+                        }
+                    }
+                } catch (err) {
+                // 如果网络问题时访问XHR的属性，在FF会抛异常
+                // http://helpful.knobs-dials.com/index.php/Component_returned_failure_code:_0x80040111_(NS_ERROR_NOT_AVAILABLE)
+                if (!forceAbort) {
+                this.dispatch(500, err)
+                }
+                }
+            }
+        },
+        jsonp: {
+            preproccess: function() {
+                var opts = this.options;
+                var name = this.jsonpCallback = opts.jsonpCallback || "avalon.jsonp" + setTimeout("1")
+                if (rjsonp.test(opts.url)) {
+                    opts.url = opts.url.replace(rjsonp, "$1" + name)
+                } else {
+                    opts.url = opts.url + (rquery.test(opts.url) ? "&" : "?") + opts.jsonp + "=" + name
+                }
+                //将后台返回的json保存在惰性函数中
+                if (name.startsWith('avalon.')) {
+                    name = name.replace(/avalon\./, '')
+                    avalon[name] = function(json) {
+                        avalon[name] = json
+                    }
+                } else {
+                    window[name] = function(json) {
+                        window[name] = json
+                    }
+                }
+                return "script"
+            }
+        },
+        script: {
+            request: function() {
+                var opts = this.options;
+                var node = this.transport = DOC.createElement("script")
+                if (opts.charset) {
+                    node.charset = opts.charset
+                }
+                var self = this;
+                node.onerror = node[useOnload ? "onload" : "onreadystatechange"] = function() {
+                    self.respond()
+                };
+                node.src = opts.url
+                head.insertBefore(node, head.firstChild)
+            },
+            respond: function(event, forceAbort) {
+                var node = this.transport
+                if (!node) {
+                    return
+                }
+                // by zilong：避免abort后还继续派发onerror等事件
+                if (forceAbort && this.timeoutID) {
+                    clearTimeout(this.timeoutID);
+                    delete this.timeoutID
+                }
+                var execute = /loaded|complete|undefined/i.test(node.readyState)
+                if (forceAbort || execute) {
+                    node.onerror = node.onload = node.onreadystatechange = null
+                    var parent = node.parentNode;
+                    if (parent) {
+                        parent.removeChild(node)
+                    }
+                    if (!forceAbort) {
+                        var args;
+                        if (this.jsonpCallback) {
+                            var jsonpCallback = this.jsonpCallback.startsWith('avalon.') ? avalon[this.jsonpCallback.replace(/avalon\./, '')] : window[this.jsonpCallback]
+                            args = typeof jsonpCallback === "function" ? [500, "error"] : [200, "success"]
+                        } else {
+                            args = [200, "success"]
+                        }
+
+                        this.dispatch.apply(this, args)
+                    }
+                }
+            }
+        },
+        upload: {
+            preproccess: function() {
+                var opts = this.options, formdata
+                if (typeof opts.form.append === "function") { //简单判断opts.form是否为FormData
+                    formdata = opts.form;
+                    opts.contentType = '';
+                } else {
+                    formdata = new FormData(opts.form) //将二进制什么一下子打包到formdata
+                }
+                avalon.each(opts.data, function(key, val) {
+                    formdata.append(key, val) //添加客外数据
+                })
+                this.formdata = formdata
+            }
+        }
+    }
+
+
+    avalon.mix(transports.jsonp, transports.script)
+    avalon.mix(transports.upload, transports.xhr)
+
+    if (!window.FormData) {
+        var str = 'Function BinaryToArray(binary)\r\n\
+                 Dim oDic\r\n\
+                 Set oDic = CreateObject("scripting.dictionary")\r\n\
+                 length = LenB(binary) - 1\r\n\
+                 For i = 1 To length\r\n\
+                     oDic.add i, AscB(MidB(binary, i, 1))\r\n\
+                 Next\r\n\
+                 BinaryToArray = oDic.Items\r\n\
+              End Function'
+        execScript(str, "VBScript");
+        avalon.fixAjax = function() {
+            avalon.ajaxConverters.arraybuffer = function() {
+                var body = this.tranport && this.tranport.responseBody
+                if (body) {
+                    return new VBArray(BinaryToArray(body)).toArray();
+                }
+            };
+            function createIframe(ID) {
+                var iframe = avalon.parseHTML("<iframe " + " id='" + ID + "'" +
+                    " name='" + ID + "'" + " style='position:absolute;left:-9999px;top:-9999px;'/>").firstChild;
+                return (DOC.body || DOC.documentElement).insertBefore(iframe, null);
+            }
+            function addDataToForm(form, data) {
+                var ret = [],
+                    d, isArray, vs, i, e;
+                for (d in data) {
+                    isArray = Array.isArray(data[d]);
+                    vs = isArray ? data[d] : [data[d]];
+                    // 数组和原生一样对待，创建多个同名输入域
+                    for (i = 0; i < vs.length; i++) {
+                        e = DOC.createElement("input");
+                        e.type = 'hidden';
+                        e.name = d;
+                        e.value = vs[i];
+                        form.appendChild(e);
+                        ret.push(e);
+                    }
+                }
+                return ret;
+            }
+            //https://github.com/codenothing/Pure-Javascript-Upload/blob/master/src/upload.js
+            avalon.ajaxTransports.upload = {
+                request: function() {
+                    var self = this;
+                    var opts = this.options;
+                    var ID = "iframe-upload-" + this.uniqueID;
+                    var form = opts.form;
+                    var iframe = this.transport = createIframe(ID);
+                    //form.enctype的值
+                    //1:application/x-www-form-urlencoded   在发送前编码所有字符（默认）
+                    //2:multipart/form-data 不对字符编码。在使用包含文件上传控件的表单时，必须使用该值。
+                    //3:text/plain  空格转换为 "+" 加号，但不对特殊字符编码。
+                    var backups = {
+                        target: form.target || "",
+                        action: form.action || "",
+                        enctype: form.enctype,
+                        method: form.method
+                    };
+                    var fields = opts.data ? addDataToForm(form, opts.data) : [];
+                    //必须指定method与enctype，要不在FF报错
+                    //表单包含文件域时，如果缺少 method=POST 以及 enctype=multipart/form-data，
+                    // 设置target到隐藏iframe，避免整页刷新
+                    form.target = ID;
+                    form.action = opts.url;
+                    form.method = "POST";
+                    form.enctype = "multipart/form-data";
+                    this.uploadcallback = avalon.bind(iframe, "load", function(event) {
+                        self.respond(event);
+                    });
+                    form.submit();
+                    //还原form的属性
+                    for (var i in backups) {
+                        form[i] = backups[i];
+                    }
+                    //移除之前动态添加的节点
+                    fields.forEach(function(input) {
+                        form.removeChild(input);
+                    });
+                },
+                respond: function(event) {
+                    var node = this.transport, child
+                    // 防止重复调用,成功后 abort
+                    if (!node) {
+                        return;
+                    }
+                    if (event && event.type === "load") {
+                        var doc = node.contentWindow.document;
+                        this.responseXML = doc;
+                        if (doc.body) { //如果存在body属性,说明不是返回XML
+                            this.responseText = doc.body.innerHTML;
+                            //当MIME为'application/javascript' 'text/javascript",浏览器会把内容放到一个PRE标签中
+                            if ((child = doc.body.firstChild) && child.nodeName.toUpperCase() === 'PRE' && child.firstChild) {
+                                this.responseText = child.firstChild.nodeValue;
+                            }
+                        }
+                        this.dispatch(200, "success");
+                    }
+                    this.uploadcallback = avalon.unbind(node, "load", this.uploadcallback);
+                    delete this.uploadcallback;
+                    setTimeout(function() { // Fix busy state in FF3
+                        node.parentNode.removeChild(node);
+                    });
+                }
+            };
+            delete avalon.fixAjax;
+        };
+        avalon.fixAjax()
+    }
+    return avalon
+})
+/**
+ * 
+ 2011.8.31
+ 将会传送器的abort方法上传到avalon.XHR.abort去处理
+ 修复serializeArray的bug
+ 对XMLHttpRequest.abort进行try...catch
+ 2012.3.31 v2 大重构,支持XMLHttpRequest Level2
+ 2013.4.8 v3 大重构 支持二进制上传与下载
+ http://www.cnblogs.com/heyuquan/archive/2013/05/13/3076465.html
+ 2014.12.25  v4 大重构 
+ 2015.3.2   去掉mmPromise
+ 2015.3.13  使用加强版mmPromise
+ 2015.3.17  增加 xhr 的 onprogress 回调
+ 2015.12.10 处理全局对象BUG               
+ */
+;
 /**
  * @license RequireJS text 2.0.13+ Copyright (c) 2010-2014, The Dojo Foundation All Rights Reserved.
  * Available via the MIT or new BSD license.
@@ -7484,13 +8757,10 @@ define('text',['module'], function (module) {
     return text;
 });
 
-define('text!smartgrid/avalon.smartgrid.html',[],function () { return '<div class="oni-smartgrid" id="oni-smartgrid">\n    <div class="oni-smartgrid-main-wrapper">\n        <div class="oni-smartgrid-main" id="oni-smartgrid-main">\n            <div class="oni-smartgrid-header" ms-if="!noHeader">\n                <div class="oni-smartgrid-header-fixed"\n                    ms-if="isAffix"\n                    ms-css-top="_headerTop"\n                    ms-visible="_fixHeaderToggle"\n                    ms-css-position="_position"\n                    ms-css-width="_gridWidth">\n                    <div ms-repeat-column="columns"\n                        class="oni-smartgrid-column"\n                        ms-visible="column.toggle"\n                        ms-css-width="column.width"\n                        ms-css-text-align="column.align"\n                        ms-class="{{column.customClass}}"\n                        ms-class-1="oni-smartgrid-hidden: _hiddenAffixHeader(column, allChecked)">\n                        <div class="oni-smartgrid-column-cell">\n                            {{column.name|sanitize|html}}\n                            <span  ms-click="sortColumn(column, $index, $event)"\n                                   ms-if="column.sortable"\n                                   ms-class="oni-helper-{{column.sortTrend}}">\n                                <span class="oni-helper-sort-top"></span>\n                                <span class="oni-helper-sort-bottom"></span>\n                            </span>\n                        </div>\n                    </div>\n                </div>\n                <div id="oni-smartgrid-header">\n                    <div ms-repeat-column="columns"\n                        class="oni-smartgrid-column"\n                        ms-visible="column.toggle"\n                        ms-css-width="column.width"\n                        ms-css-text-align="column.align"\n                        ms-class="{{column.customClass}}"\n                        ms-class-1="oni-smartgrid-hidden: _hiddenAffixHeader(column, allChecked)">\n                        <div class="oni-smartgrid-column-cell">\n                            {{column.name|sanitize|html}}\n                            <span  ms-click="sortColumn(column, $index, $event)"\n                                   ms-if="column.sortable"\n                                   ms-class="oni-helper-{{column.sortTrend}}">\n                                <span class="oni-helper-sort-top"></span>\n                                <span class="oni-helper-sort-bottom"></span>\n                            </span>\n                        </div>\n                    </div>\n                </div>\n            </div>\n            <div class="oni-smartgrid-body-wrapper">\n                  <div class="oni-smartgrid-body-modal" ms-if="loadingToggle"></div>\n                  <div id="oni-smartgrid-loading-text" class="oni-smartgrid-body-loading" ms-if="loadingToggle">{{loadingText}}</div>\n                <div class="oni-smartgrid-body" id="oni-smartgrid-body" ms-css-min-height="bodyMinHeight">\n                </div>\n            </div>\n        </div>\n    </div>\n    <div class="oni-smartgrid-footer" ms-if="!noFooter">\n        <div class="oni-smartgrid-pager-wrapper" ms-visible="pageable && _pagerShow">\n            <div ms-if="pageable" ms-widget="pager, $, $pagerConfig"></div>\n        </div>\n    </div>\n</div>\nMS_OPTION_EJS\n<&- var trl = @data.length &>\n<&- if(!trl) { &>\n    <div class="oni-smartgrid-nodata"><&=@noResult&></div>\n<&- } else { &>\n    <&- for(var i=0, tr; i<trl; i++) { &>\n        <&- tr = @data[i];\n            var selectedClass = "";\n            if (i%2==0) {\n                selectedClass = "oni-smartgrid-odd";\n            } else {\n                selectedClass = "oni-smartgrid-even"\n            }\n            if (tr.selected && @checkRow) {\n                selectedClass += " oni-smartgrid-selected"\n            }\n            if (tr.disable) {\n                selectedClass += " oni-smartgrid-disabled"\n            }&>\n        <div id="<&=tr.$id&>" class="<&=selectedClass&> oni-smartgrid-row" ms-hover="oni-smartgrid-hover">\n            <&- for(var j=0, tdl=@columns.length, td; j<tdl; j++) { &>\n                <&- td=@columns[j].$model;\n                    var textAlign="text-align:"+td.align,\n                        customClass = td.customClass || "",\n                        format = td.format;&>\n                <div class="oni-smartgrid-column" ms-visible="columns[<&= j &>][\'toggle\']" ms-css-width="columns[<&= j &>][\'width\']">\n                    <div style="<&= textAlign &>" class="<&= customClass &> oni-smartgrid-column-cell">\n                        <&= format(@vmId, td.key , i, tr[td.key], tr, tr.disable) &>\n                    </div>\n                </div>\n            <& } &>\n        </div>\n    <& } &>\n<& } &>\n';});
+define('text!simplegrid/avalon.simplegrid.html',[],function () { return '<div class="oni-simplegrid">\n    <div class="oni-simplegrid-scroll-wrapper" \n         ms-css-height="tbodyHeight+theadHeight" \n         ms-widget="scrollbar,$simplegrid{{MS_OPTION_ID}},$spgScrollbarOpts" \n         ms-css-padding-bottom="paddingBottom"\n         data-scrollbar-position="right,bottom">\n        <div class="oni-simplegrid-wrapper"  \n             ms-css-nowidth="gridWidth" \n             >\n            <table class="oni-simplegrid-thead" \n                   ms-css-margin-left="cssLeft" >\n                <tr>\n                    MS_OPTION_THEAD_BEGIN\n                    <td data-repeat-rendered="_theadRenderedCallback"\n                        ms-repeat="columns"\n                        ms-css-width="el.width" \n                        ms-css-text-align="el.align" \n                        ms-class="{{el.className}}" \n                        ms-attr-title="el.title"\n                        ms-visible="el.toggle" \n                        ms-data-vm="el"\n                        ms-on-mousemove-10="startResize($event,el)"\n                        ms-on-mousedown-10="resizeColumn($event,el)"\n                        ms-on-mouseleave-10="stopResize"\n                        >{{el.text | html}}\n                        <span  ms-click="sortColumn(el, $index)"\n                               ms-if="el.sortable" \n                               ms-class="oni-helper-{{ getArrow(el, $index)}}">\n                            <span class="oni-helper-sort-top"></span>\n                            <span class="oni-helper-sort-bottom"></span>\n                        </span>\n                    </td>\n                    MS_OPTION_THEAD_END\n                </tr>\n            </table>\n            <table class="oni-simplegrid-tbody" \n                   ms-css-margin-left="cssLeft" >\n                <tr data-repeat-rendered="_tbodyRenderedCallback"\n                    ms-repeat-row="_data"\n                    ms-class="{{rowClass}}:$index % 2 && _data.size()>=2"\n                    ms-hover="oni-state-hover"\n                    ms-class-1="oni-state-selected: row.checked"\n                    >\n                    MS_OPTION_TBODY_BEGIN\n                    <td class="oni-simplegrid-td"\n                        data-with-sorted="getColumnsOrder"\n                        ms-repeat="row" \n                        ms-visible="getCellProperty($key,\'toggle\')" \n                        ms-css-width="getCellProperty($key,\'width\')"\n                        ms-css-text-align="getCellProperty($key,\'align\')"\n                        >\n                        {{ renderCell($val, $key, row) | html }}\n                    </td>\n                    MS_OPTION_TBODY_END\n                </tr>\n            </table>\n            <div ms-if="!_data.size()" \n                 ms-css-height="noResultHeight"\n                 ms-css-line-height="{{noResultHeight}}px"\n                 class="oni-simplegrid-empty">\n                {{noResultContent|html}}\n            </div>\n        </div>\n        <div class="oni-scrollbar-scroller">\n            <div class="oni-simplegrid-scroll-marker" ms-css-height="getScrollerHeight()" \n                 ms-css-nowidth="gridWidth">\n            </div>\n\n        </div>\n    </div>\n    <div class="oni-simplegrid-pager-wrapper"  ms-if="pageable" id="pager-MS_OPTION_ID" >\n\n    </div>\n    <div ms-widget="loading"></div>\n</div>\n';});
 
 
-define('text!loading/avalon.loading.html',[],function () { return '<div class="oni-helper-reset oni-helper-clearfix oni-widget">\n     <div class="oni-helper-reset oni-helper-clearfix oni-widget oni-loading-modal" \n          ms-class-100="oni-helper-max-index:toggle" \n          ms-if="modal" \n          ms-attr-id="\'modal\'+$loadingID" \n          style="z-index:999;" \n          ms-css-opacity="modalOpacity" \n          ms-css-background-color="modalBackground" \n          ms-visible="toggle">\n          <iframe allowTransparency="true" frameborder="none" src="javascript:\'\'"></iframe>\n          </div>\n     <div class="oni-helper-reset oni-helper-clearfix oni-widget oni-widget-content oni-loading" \n          ms-class-100="oni-helper-max-index:toggle" \n          ms-visible="toggle" \n          ms-css-width="width" \n          ms-css-height="height" \n          ms-css-margin-left="-width/2+\'px\'" \n          ms-css-margin-top="-height/2+\'px\'" \n          ms-attr-id="\'oni-loading-\'+$loadingID"><div \n          ms-css-width="width" \n          ms-css-height="height">{{MS_WIDGET_HTML}}</div></div>\n</div>';});
-
-
-define('text!loading/avalon.loading.bar.html',[],function () { return '{{MS_WIDGET_BALL}}\n<v:oval ms-repeat-item="data" style="position:absolute;" \n  ms-attr-strokecolor="color" \n  ms-attr-fillcolor="color" \n  ms-css-left="item.x + \'px\'" \n  ms-css-top="item.y + \'px\'" \n  ms-css-width="item.r * 2 + \'px\'" \n  ms-css-height="item.r * 2 + \'px\'">\n</v:oval>\n{{MS_WIDGET_DIVIDER}}\n<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">\n  <circle  \n          ms-attr-r="data[$index].r" \n          ms-attr-cx="data[$index].x+data[$index].r" \n          ms-attr-cy="data[$index].y+data[$index].r" \n          ms-repeat="data" \n          ms-attr-fill="color">\n      <animate attributeName="opacity" from="1" to=".1" repeatCount="indefinite" \n               ms-if="type==\'ball\'" \n               ms-attr-dur="svgDur" \n               ms-attr-begin="data[$index].begin"/>\n      <animate attributeName="r" repeatCount="indefinite" keySplines="0.2 0.2 0.4 0.8;0.2 0.2 0.4 0.8;0.2 0.2 0.4 0.8" calcMode="spline" \n               ms-attr-values="\'0;\'+data[$index].r+\';0;0\'"\n               ms-attr-dur="svgDur" \n               ms-if="type==\'spinning-bubbles\'" \n               ms-attr-begin="data[$index].begin"/>\n      <animate attributeName="r" repeatCount="indefinite" keytimes="0;0.2;0.7;1" keySplines="0.2 0.2 0.4 0.8;0.2 0.6 0.4 0.8;0.2 0.6 0.4 0.8" calcMode="spline" \n        ms-if="type==\'bubbles\'"\n        ms-attr-begin="data[$index].begin"  \n        ms-attr-dur="svgDur" \n        ms-attr-values="\'0;\'+data[$index].r+\';0;0\'" />\n  </circle>\n</svg>\n{{MS_WIDGET_TYPE}}\n{{MS_WIDGET_SPIN}}\n<v:oval stroked="true" filled="F" \n        ms-attr-strokecolor="color" \n        ms-css-height="width+\'px\'" \n        ms-css-width="width+\'px\'" \n        ms-css-opacity="opacity" \n        ms-attr-strokeweight="width / 2 - widthInner / 2+\'px\'" \n        ms-repeat="data" \n  style="position:absolute;z-index:2;left:0;top:0;"></v:oval>\n<v:arc stroked="true" filled="F" \n    ms-attr-strokecolor="color" \n    ms-attr-strokeweight="width / 2 - widthInner / 2+\'px\'" \n    style="position:absolute;z-index:3;text-indent:-1000px;overflow:hidden;left:0;top:0;" \n    ms-attr-startangle="startangle" \n    ms-attr-endangle="endangle" \n    ms-css-height="width+\'px\'" \n    ms-css-width="width+\'px\'" \n    ms-repeat="data">\n  </v:arc>\n{{MS_WIDGET_DIVIDER}}\n<svg width="100%" height="100%" version="1.1" xmlns="http://www.w3.org/2000/svg">\n  <path \n    ms-attr-d="arc" \n    ms-attr-stroke="color" \n    ms-attr-stroke-width="radius" \n    ms-attr-transform="\'rotate(0 \' + spinPoint +\')\'"\n    stroke-linejoin="round" fill="none">\n      <animateTransform attributeName="transform" repeatCount="indefinite" attributeType="XML" type="rotate" begin="0s" \n        ms-attr-from="0 + \' \' + spinPoint" \n        ms-attr-to="360 + \' \' + spinPoint" \n        ms-attr-dur="svgDur" />\n    </path>\n  <path stroke-linejoin="round" \n    ms-attr-d="circle" \n    ms-attr-stroke-width="radius" \n    ms-attr-stroke="color" \n    ms-css-opacity="opacity" \n    fill="none"></path>\n  </svg>\n{{MS_WIDGET_TYPE}}\n{{MS_WIDGET_SPINNING_SPIN}}\n<v:arc stroked="true" filled="F" \n    ms-attr-strokecolor="color" \n    ms-attr-strokeweight="radius+\'px\'" \n    style="position:absolute;z-index:3;text-indent:-1000px;overflow:hidden;left:0;top:0;" \n    ms-attr-startangle="item.startangle" \n    ms-attr-endangle="item.endangle" \n    ms-css-opacity="opacities[$index]" \n    ms-css-height="width+\'px\'" \n    ms-css-width="width+\'px\'" \n    ms-repeat-item="data">\n  </v:arc>\n{{MS_WIDGET_DIVIDER}}\n<svg width="100%" height="100%" version="1.1" xmlns="http://www.w3.org/2000/svg">\n  <path \n    ms-attr-d="arc" \n    ms-attr-stroke="color" \n    ms-attr-stroke-width="radius" \n    ms-attr-transform="item.rotate" \n    ms-repeat-item="data" \n    ms-css-opacity="opacities[$index]" \n    stroke-linejoin="round" fill="none">\n      <animate ms-if="0" attributeName="opacity" from="1" to=".2" repeatCount="indefinite" \n               ms-attr-dur="svgDur" \n               ms-attr-begin="item.begin"/>\n    </path>\n  </svg>\n{{MS_WIDGET_TYPE}}\n{{MS_WIDGET_SPOKES}}\n<v:rect style="position:absolute;"  \n        ms-attr-fillcolor="color" \n        ms-attr-strokecolor="color"  \n        ms-css-left="item.spokesLeft+\'px\'" \n        ms-css-top="item.spokesTop+\'px\'"\n        ms-css-width="spokesWidth+\'px\'" \n        ms-css-height="spokesHeight+\'px\'" \n        ms-css-rotation="item.spokesRotation" \n        ms-repeat-item="data">\n        <v:fill \n                ms-attr-color="color"></v:fill>\n  </v:rect>\n{{MS_WIDGET_DIVIDER}}\n<svg width="100%" height="100%" version="1.1" xmlns="http://www.w3.org/2000/svg">\n  <path opacity=".1" ms-attr-d="svgPath" \n      ms-attr-transform="data[$index].rotate" \n        ms-repeat="data" \n    ms-attr-fill="color">\n    <animate attributeName="opacity" from="1" to=".1" repeatCount="indefinite" \n             ms-attr-dur="svgDur" \n             ms-attr-begin="data[$index].begin"/></path>\n  </svg>\n{{MS_WIDGET_TYPE}}\n{{MS_WIDGET_IMG}}\n<img width="100%" height="100%" ms-attr-src="src">';});
+define('text!pager/avalon.pager.html',[],function () { return '<div class="oni-pager" onselectstart="return false;" unselectable="on" ms-visible="!!totalPages">\n    <span class="oni-pager-prev"\n          ms-class="oni-state-disabled:firstPage==1"\n          ms-if="isShowPrev()"\n          ms-attr-title="getTitle(\'prev\')" \n          ms-click="jumpPage($event,\'prev\')" \n          ms-text="prevText"\n          ></span>\n    <span class="oni-pager-item"\n          ms-visible="firstPage!==1" \n          ms-attr-title="getTitle(\'first\', currentPage)" \n          ms-click="jumpPage($event,\'first\')" \n          ms-class-oni-state-active="currentPage == 1"\n          ms-hover="oni-state-hover">1</span>\n    <span class=\'oni-pager-omit\'\n          ms-if="showFirstOmit" \n          ms-text="ellipseText"\n          ></span>\n    <span  class="oni-pager-item" \n           ms-repeat="pages" \n           ms-attr-title="getTitle(el, currentPage)"\n           ms-hover="oni-state-hover"\n           ms-click="jumpPage($event,el)"\n           ms-class-oni-state-active="el == currentPage" \n           ms-text="el"\n           ></span>\n    <span class="oni-pager-omit"\n          ms-if="showLastOmit" \n          ms-text="ellipseText"\n          ></span>\n    <span class="oni-pager-item "\n          ms-visible="lastPage!==totalPages" \n          ms-attr-title="getTitle(\'last\', currentPage, totalPages)" \n          ms-hover="oni-state-hover" \n          ms-click="jumpPage($event,\'last\')"  \n          ms-text="totalPages"\n          ></span>\n    <span class="oni-pager-next"\n          ms-if="isShowNext()" \n          ms-attr-title="getTitle(\'next\')"\n          ms-click="jumpPage($event,\'next\')" \n          ms-class="oni-state-disabled:lastPage==totalPages"\n          ms-text="nextText"\n          ></span>\n    <div class="oni-pager-jump" ms-if="showJumper">\n        <span class="oni-pager-text" ms-html="_getTotalPages(totalPages)"></span>\n        <div class="oni-pager-textbox-wrapper">\n            <input class="oni-pager-textbox" ms-duplex="_currentPage" data-duplex-event="change" ms-keyup="changeCurrentPage">\n        </div>\n        <span class="oni-pager-text">{{regional.pageText}}</span>\n        <button class="oni-pager-button" ms-click="changeCurrentPage" >{{regional.confirmText}}</button>\n    </div>\n</div>\n';});
 
 define('normalize',[],function() {
   
@@ -7763,483 +9033,7 @@ define('css',[],function() {
   return cssAPI;
 });
 
-define('css!loading/avalon.loading',[],function(){});
-
 define('css!chameleon/oniui-common',[],function(){});
-/**
- * @cnName 加载效果组件
- * @enName loading
- * @introduce
- *  <p> 实现各种加载动画效果
-</p>
- */
-define('loading/avalon.loading',["avalon", "text!./avalon.loading.html", "text!./avalon.loading.bar.html", "css!./avalon.loading.css", "css!../chameleon/oniui-common.css"], function(avalon, template, ballTemplate) {
-    var widgetCount = 0, 
-        isIE = navigator.userAgent.match(/msie/ig) || ("ActiveXObject" in window),
-        _key = (99999 - Math.random() * 10000) >> 0,
-        templateCache = {},
-        parts = ballTemplate.split("{{MS_WIDGET_TYPE}}"),
-        _config = {}
-    // 通过addtype注册新的效果
-    // config里面是每个type特有的配置或者方法，mix到vm里
-    // drawser方法在注入html之前执行，主要用于生成绘图需要的数据
-    // effect方法用于setinterval动画效果
-    function addType(type, config, drawer, effect) {
-        config["drawer"] = drawer
-        config["effect"] = effect
-        _config[type] = config
-    }
-    function g(id) {
-        return document.getElementById(id)
-    }
-    avalon.each(parts, function(i, item) {
-        var type,
-                item = item.trim().replace(/^\{\{MS_WIDGET_[^\}]+\}\}/g, function(mat) {
-            type = mat.replace(/\{\{MS_WIDGET_|\}\}/g, "").replace(/_/g, "-").toLowerCase()
-            return ""
-        })
-        if (type) {
-            type = type
-            item = item.split("{{MS_WIDGET_DIVIDER}}")
-            templateCache[type] = {
-                "svg": item[1] || item[0],
-                "vml": item[0]
-            }
-        }
-    })
-    // svg绘制圆弧
-    function circleValueList(r, bw, ct) {
-        var arr = [],
-                count = ct || 36,
-                r = r - bw,
-                arc,
-                x,
-                y,
-                res
-        for (var i = 0; i <= count; i++) {
-            arc = Math.PI / 2 - Math.PI * 2 / count * i
-            x = Math.cos(arc) * r + r * 1 + bw * 1
-            y = (1 - Math.sin(arc).toFixed(4)) * r + bw * 1
-            res = (i ? " L" : "M") + x + " " + y + (i == 100 ? "Z" : "")
-            arr.push(res)
-        }
-        return arr
-    }
-    // 注册ball，小球排列成一个圆
-    addType("ball", {
-        "width": 32,
-        "widthInner": 28,
-        count: 10, //@config type=ball，loading效果组成的小图形个数
-        interval: 120,//@config type=ball，毫秒数，动画效果帧间隔
-        circleMargin: 1,//@config type=ticks，小球之间的间距，单位是一倍小球半径
-        "svgDur": "1s"
-    }, function(vmodel) {
-        var type = vmodel.type,
-            count = vmodel.count,
-            width = vmodel.width,
-            radiusOut = width / 2,
-            interval = vmodel.interval,
-            radiusInner = (width - vmodel.widthInner) / 2
-        if(type === "ball") vmodel.svgDur = interval * count / 1000 + "s"
-        return function(loop) {
-            var angel = Math.PI * (0.5 - 2 * loop / count)
-            vmodel.data.push({
-                "x": (radiusOut - radiusInner) * 　(Math.cos(angel) + 1),
-                "y": (radiusInner - radiusOut) * (Math.sin(angel) - 1),
-                "r": radiusInner,
-                "begin": [interval * loop / 1000, "s"].join("")
-            }) 
-            vmodel.opacities.push((loop / count).toFixed(2))
-        }
-    }, function(vmodel, ele, tagList, callback) {
-        // only for ie
-        if(!isIE && (vmodel.type !== "ticks") && vmodel.type != "spinning-spin") return
-        var tagList = Array.isArray(tagList) ? tagList : ["circle", "oval"]
-            , tag = vmodel.svgSupport ? tagList[0] : tagList[1] 
-            , ele = ele.getElementsByTagName(tag)
-            , len = ele.length, index = len, eles = [], flag
-        avalon.each(ele, function(i, item) {
-            eles.push(avalon(item))
-            // fix ie 7-8 render bug...
-            if (i === len - 1 && !vmodel.svgSupport) {
-                item.style.display = "none"
-                item.style.display = "block"
-            }
-        })
-        if(vmodel.type === "ticks") {
-            index = 0;
-            return function() {
-                for(var i = 0; i < len; i++) {
-                    var op = i > index ? vmodel.opacities[1] : vmodel.opacities[0]
-                    if(eles[i]) {
-                        eles[i].css("visibility", op >= 1 ? "visible" : "hidden")
-                    }
-                }
-                index++
-                if(index >= len) {
-                    index = -1
-                }
-            }
-        } 
-        // share for type=ball and type=spokes
-        return function() {
-            // 顺时针
-            index--
-            if (index < 0) {
-                index = len - 1
-            }
-            for (var i = 0; i < len; i++) {
-                if(callback) {
-                    callback(eles[i], i, index)
-                } else {
-                    var op = vmodel.opacities[(i + index) % len] * 100 / 100
-                    eles[i] && eles[i].css("opacity", op)
-                }
-            }
-        }
-    })
-    // 注册ticks，小球排列成一行
-    addType("ticks", avalon.mix({}, _config["ball"], {
-        count: 3,//@config type=ticks，小球个数
-        height: 20,//@config type=ticks，高度
-        interval: 360 //@config type=ticks，毫秒数，动画效果帧间隔
-    }), function(vmodel) {
-        var count = vmodel.count,
-            rate = 2 + vmodel.circleMargin,
-            radiusInner = (vmodel.width - vmodel.widthInner) / 2,
-            marginLeft = (vmodel.width - radiusInner * ( 3 * count - 1)) / 2
-        return function(loop) {
-            vmodel.data.push({
-                "x": marginLeft + (loop * rate * radiusInner),
-                "y": vmodel.height / 2 - radiusInner,
-                "r": radiusInner,
-                "begin": [vmodel.interval * loop / 1000, "s"].join("")
-            })
-            vmodel.opacities.push(loop ? 0 : 1)
-        }
-    }, _config["ball"].effect)
-    templateCache["ticks"] = templateCache["ball"]
-    // 注册spin，圆环转圈
-    addType("spin", {
-        width: 32,
-        widthInner: 26,
-        angel: 90, //@config type=spin，转动的弧形的角度，单位是1度
-        arc: "",
-        circle: "",
-        radius: "",
-        opacity: 0.2, //@config type=spin，背景圆弧的透明度
-        startangle: 0, //@config type=spin，圆弧开始的角度，单位1度
-        endangle: 0,
-        interval: 36, //@config type=spin，毫秒数，动画效果帧间隔
-        $circleData: "",
-        $partsData: "",
-        spinPoint: "23 23",
-        svgDur: "1s",
-        data: [1]
-    }, function(vmodel) {
-        vmodel.radius = vmodel.width / 2 - vmodel.widthInner / 2
-        if(vmodel.svgSupport) {
-            vmodel.svgDur = vmodel.interval * 36 / 1000 + "s"
-            vmodel.spinPoint = [vmodel.width / 2, vmodel.width / 2].join(" ")
-            var circle = vmodel.$circleData = circleValueList(vmodel.width / 2, vmodel.width / 2 - vmodel.widthInner / 2),
-                    parts = vmodel.$partsData = circle.slice(0, Math.floor(vmodel.angel / 360 * (circle.length - 1)))
-            vmodel.arc = parts.join("")
-            vmodel.circle = circle.join("")
-        } else {
-            vmodel.startangle = 0
-            vmodel.endangle = vmodel.angel
-        }
-    }, function(vmodel, ele) {
-        // only for ie
-        if(!isIE) return
-        var angel = stepper = vmodel.angel
-        if(vmodel.svgSupport) {
-            var len = vmodel.$circleData.length, ele = avalon(ele.getElementsByTagName("path")[0])
-            angel = stepper = Math.floor(vmodel.angel / 360 * len)
-            return function() {
-                // 生成圆弧的点阵是36个点，因此步长用1就足够了
-                stepper+=1;
-                if(stepper >= len) stepper = 0
-                // 改用rotate属性
-                ele.attr("transform", "rotate(" + stepper * 10 + " " + vmodel.spinPoint + ")")
-            }
-        }
-        return function() {
-            stepper += 10
-            var startangle = stepper - angel
-            if (stepper > 360) {
-                stepper = stepper - 360
-                startangle = startangle - 360
-            }
-            vmodel.startangle = startangle
-            vmodel.endangle = stepper
-        }
-    })
-    // 注册小长方形圆形排列效果
-    addType("spokes", {
-        count: 8, //@config type=spokes，长方形个数
-        width: 32, //@config type=spokes，效果宽度,
-        spokesWidth: 4, //@config type=spokes，小长方形宽度
-        spokesHeight: 8, //@config type=spokes，小长方形高度
-        interval: 125, //@config type=spokes，效果动画间隔毫秒数
-        svgPath: "M14 0 H18 V8 H14 z",
-        svgDur: "1s"
-    },function(vmodel) {
-        var count = vmodel.count,w = vmodel.width, sw = vmodel.spokesWidth, sh = vmodel.spokesHeight, index = 0, interval = vmodel.interval;
-        if(vmodel.svgSupport) {
-            vmodel.svgPath = ["M", (w - sw) / 2, " 0 H", (w + sw) / 2, " V", sh, " H", (w - sw) / 2, " z"].join("")
-            vmodel.svgDur = interval * count / 1000 + "s"
-            var step = 360 / count
-            return function(loop) {
-                vmodel.data.push({     
-                    "begin": [interval * loop / 1000, "s"].join(""),
-                    "rotate": ["rotate(", loop * step, " ", [w / 2, w / 2].join(" ") + ")"].join("")
-                })
-                vmodel.opacities.push((loop / count).toFixed(2))
-            }
-        }
-        var step = Math.PI * 2 / count, angel, halfSw = sw / 2
-        return function(loop) {
-            angel = Math.PI / 2 - step * loop
-            var vsin = Math.sin(angel),
-                vcos = Math.cos(angel),
-                op = (loop / count).toFixed(2)
-            vmodel.data.push({
-                "spokesRotation": 360 * loop / count,
-                "spokesOpacity": op * 50,
-                "spokesLeft":(w / 2 - sw) * (1 + vcos),
-                "spokesTop": (w /2 - sw)  * (1 - vsin)
-            })
-            vmodel.opacities.push(op)
-        }
-    }, function(vmodel, ele) {
-        return _config["ball"].effect(vmodel, ele, ["path", "rect"])
-    })
-    // 注册小球排列成一个圆，半径变化
-    addType("spinning-bubbles", avalon.mix({}, _config["ball"], {
-        width: 64,//@config type=spinning-bubbles 宽度，小球的个数继承自type=ball
-        widthInner: 54,//@config type=spinning-bubbles 内宽
-        $zooms: []
-    }), function(vmodel) {
-        var drawer = _config["ball"].drawer(vmodel), count = vmodel.count
-        if(count >= 7) {
-            vmodel.$zooms = [0.2, 0.4, 0.8, 1, 0.8, 0.4, 0.2]
-        } else if(count >= 5) {
-            vmodel.$zooms = [0.2, 0.8, 1, 0.8, 0.2]
-        } else {
-            vmodel.$zooms = [1, 0.1, 0.1, 0.1]
-        }
-        while(vmodel.$zooms.length < vmodel.count) {
-            vmodel.$zooms.push(0.1)
-        }
-        return function(loop) {
-            drawer(loop)
-        }
-    }, function(vmodel, ele) {
-        var r = (vmodel.width - vmodel.widthInner) / 2, count = vmodel.count
-        if(vmodel.svgSupport) return _config["ball"].effect(vmodel, ele, ["circle", "oval"], function(ele, loop, step) {
-            ele.attr("r", r * vmodel.$zooms[(loop + step) % count])
-        })
-        return _config["ball"].effect(vmodel, ele, ["circle", "oval"], function(ele, loop, step) {
-            ele.css("zoom", vmodel.$zooms[(loop + step) % vmodel.count])
-        })
-    })
-    // 注册bubbles, 高级浏览器
-    addType("bubbles", avalon.mix({}, _config["spinning-bubbles"], {
-        height: 30, //@config type=bubbles 高度，宽度继承type=spinning-bubbles
-        widthInner:50,//@config type=bubbles 内宽
-        count: 3,//@config type=bubbles 球的个数
-        interval: 360,//@config type=bubbles 动画ms数
-        "circleMargin": 0.5//@config type=bubbles bubbles效果下个小球的间距
-    }), function(vmodel) {
-        _config["spinning-bubbles"].drawer(vmodel)
-        return _config["ticks"].drawer(vmodel)
-    }, _config["spinning-bubbles"].effect)
-    // 注册spinning-spin
-    addType("spinning-spin", avalon.mix({}, _config["spin"], {
-        opacities: [],
-        data: [],
-        radius: 1,
-        interval: _config["ball"].interval, //@config type=spinning-spin 帧间隔，继承ball
-        count: 8, //@config type=spinning-spin 小圆弧个数，一般请保证 360 / 8 % padding = 0
-        width: 46, //@config type=spinning-spin 圆外直径
-        widthInner: 38, //@config type=spinning-spin 圆内直径
-        padding: 5//@config type=spinning-spin 小圆弧间间隔的角度数
-    }), function(vmodel) {
-        var ct = 360 / vmodel.padding * 3, r = vmodel.width / 2, dt = circleValueList(r, r - vmodel.widthInner / 2, ct), count = vmodel.count, interval = vmodel.interval, step = 360 / count
-        vmodel.radius = vmodel.width / 2 - vmodel.widthInner / 2
-        function writeOp(loop) {
-            var cp = (loop / count).toFixed(2)
-            cp = cp > 0.6 ? cp : 0.2
-            vmodel.opacities.push(cp)
-        }
-        if(vmodel.svgSupport) {
-            vmodel.svgDur = interval * count / 1000 + "s"
-            vmodel.arc = dt.slice(0, Math.floor((1 / count - vmodel.padding / 360 ) * dt.length)).join("")
-            return function(loop) {
-                vmodel.data.push({
-                    rotate: "rotate(" + step * loop + " " + r + " " + r + ")",
-                    begin: [interval * loop / 1000, "s"].join("")
-                })
-                writeOp(loop)
-            }
-        }
-        return function(loop) {
-            vmodel.data.push({
-                startangle: loop / count * 360,
-                endangle: (loop + 1) / count * 360 - 10
-            })
-            writeOp(loop)
-        }
-
-    }, function(vmodel, ele) {
-        return _config["ball"].effect(vmodel, ele, ["path", "arc"])
-    })
-    // 注册自定义图片
-    addType("img", {
-        src: "https://source.qunarzz.com/piao/images/loading_camel.gif",//@config type=img，loading效果的gif图片
-        width: 52,//@config type=img，loading效果宽度
-        height: 39,//@config type=img，loading效果高度
-        miao: 0
-    }, void 0, void 0)
-    var svgSupport = !!document.createElementNS && !!document.createElementNS('http://www.w3.org/2000/svg', 'svg').createSVGRect
-    var widget = avalon.ui.loading = function(element, data, vmodels) {
-
-        var options = data.loadingOptions
-        //方便用户对原始模板进行修改,提高定制性
-        options.template = options.getTemplate(template, options)
-        if (!_config[options.type]) {
-            options.type = "ball"
-        }
-        // 读入各种效果的配置
-        avalon.each(_config[options.type], function(i, item) {
-            if (options[i] === void 0) options[i] = item
-        })
-
-        var vmodel = avalon.define(data.loadingId, function(vm) {
-            vm.height = ""
-            vm.width = ""
-            vm.data = []
-            vm.opacities = []
-            avalon.mix(vm, options)
-            vm.widgetElement = element
-            vm.rootElement = ""
-            vm.svgSupport = svgSupport
-            vm.$loadingID = widgetCount + "" + _key
-            vm.$timer = ""
-            vm.$skipArray = ["widgetElement", "template", "opacities", "data", "rootElement"]
-
-            var inited
-            vm.$init = function(continueScan) {
-                if (inited)
-                    return
-                inited = true
-                var id,
-                    container = options.container || vmodel.widgetElement,
-                    elementParent = ((avalon.type(container) === "object" && container.nodeType === 1 && document.body.contains(container)) ? container : document.getElementById(container)) || document.body,
-                    type = vmodel.type,
-                    // radiusOut = vmodel.width / 2,
-                    html = (templateCache[type]||templateCache["ball"])[vmodel.svgSupport ? "svg" : "vml"],
-                    index = 0
-                vmodel.width = vmodel.width == false ? vmodel.height : vmodel.width
-                vmodel.height = vmodel.height == false ? vmodel.width : vmodel.height
-                // 计算绘图数据
-                if(vmodel.drawer) {
-                    var loop = 0, drawer = vmodel.drawer(vmodel)
-                    while(loop < vmodel.count && drawer) {
-                        drawer(loop)
-                        loop++
-                    }
-                }
-                var frag = avalon.parseHTML(vmodel.template.replace("{{MS_WIDGET_HTML}}", html).replace("{{MS_WIDGET_ID}}", vmodel.$loadingID))
-                newDiv = frag.childNodes[0]
-                elementParent.appendChild(newDiv)
-                vm.rootElement = newDiv
-                avalon.log("avalon请尽快升到1.3.7+")
-                avalon.scan(elementParent, [vmodel].concat(vmodels))
-                if (typeof options.onInit === "function") {
-                    options.onInit.call(element, vmodel, options, vmodels)
-                }
-                vmodel._effect()
-            }
-            vm._effect = function() {
-                if (vmodel.toggle) {
-                    var ele = document.getElementById("oni-loading-" + vmodel.$loadingID)
-                    if (ele) {
-                        var effect = vmodel.effect && vmodel.effect(vmodel, ele)
-                        if(effect) {
-                            clearInterval(vmodel.$timer)
-                            vmodel.$timer = setInterval(effect, vmodel.interval)
-                        }
-                    }
-                }
-            }
-            vm.$remove = function() {
-                clearInterval(vmodel.$timer)
-                element.innerHTML = element.textContent = ""
-            }
-
-            //@interface showLoading() 显示loading效果
-            vm.showLoading = function() {
-                if (vmodel.toggle)
-                    return
-                vmodel.toggle = true
-                vmodel._effect()
-            }
-            //@interface hideLoading() 隐藏loading
-            vm.hideLoading = function() {
-                vmodel.toggle = false
-            }
-            //@interface destroyLoading() 销毁loading
-            vm.destroyLoading = function() {
-                vmodel.toggle = false
-                vmodel.$remove()
-            }
-            /**
-             * @interface 将loading效果插入到指定的容器里
-             * @param 目标容器元素，默认是绑定widget的元素
-             */
-            vm.appendTo = function(container) {
-                var cnt = container || vm.widgetElement,
-                    modal = g("modal" + vm.$id),
-                    loading = g("loading" + vm.$id)
-                if(modal) cnt.appendChild(modal)
-                if(loading) cnt.appendChild(loading)
-            }
-
-        })
-
-        vmodel.$watch("toggle", function(n) {
-            if (!n) {
-                clearInterval(vmodel.$timer)
-            } else {
-                vmodel._effect()
-            }
-        })
-      
-        widgetCount++
-
-        return vmodel
-    }
-    widget.defaults = {
-        //@config onInit(vmodel, options, vmodels) 完成初始化之后的回调,call as element's method
-        onInit: avalon.noop,
-        color: "#619FE8", //@config 效果的颜色
-        type: "ball", //@config 类型，默认是ball，球，可取spin,ticks
-        toggle: true, //@config 是否显示
-        modal: true, //@config 是否显示遮罩
-        modalOpacity: 0.1, //@config 遮罩透明度
-        modalBackground: "#fff",//@config 遮罩背景色
-        container: void 0, //@config loading效果显示的容器，默认是绑定widget的元素
-        getTemplate: function(tmpl, opts, tplName) {
-            return tmpl
-        }, //@config getTemplate(tpl, opts, tplName) 定制修改模板接口
-        $author: "skipper@123"
-    }
-});
-
-define('text!pager/avalon.pager.html',[],function () { return '<div class="oni-pager" onselectstart="return false;" unselectable="on" ms-visible="!!totalPages">\n    <span class="oni-pager-prev"\n          ms-class="oni-state-disabled:firstPage==1"\n          ms-if="isShowPrev()"\n          ms-attr-title="getTitle(\'prev\')" \n          ms-click="jumpPage($event,\'prev\')" \n          ms-text="prevText"\n          ></span>\n    <span class="oni-pager-item"\n          ms-visible="firstPage!==1" \n          ms-attr-title="getTitle(\'first\', currentPage)" \n          ms-click="jumpPage($event,\'first\')" \n          ms-class-oni-state-active="currentPage == 1"\n          ms-hover="oni-state-hover">1</span>\n    <span class=\'oni-pager-omit\'\n          ms-if="showFirstOmit" \n          ms-text="ellipseText"\n          ></span>\n    <span  class="oni-pager-item" \n           ms-repeat="pages" \n           ms-attr-title="getTitle(el, currentPage)"\n           ms-hover="oni-state-hover"\n           ms-click="jumpPage($event,el)"\n           ms-class-oni-state-active="el == currentPage" \n           ms-text="el"\n           ></span>\n    <span class="oni-pager-omit"\n          ms-if="showLastOmit" \n          ms-text="ellipseText"\n          ></span>\n    <span class="oni-pager-item "\n          ms-visible="lastPage!==totalPages" \n          ms-attr-title="getTitle(\'last\', currentPage, totalPages)" \n          ms-hover="oni-state-hover" \n          ms-click="jumpPage($event,\'last\')"  \n          ms-text="totalPages"\n          ></span>\n    <span class="oni-pager-next"\n          ms-if="isShowNext()" \n          ms-attr-title="getTitle(\'next\')"\n          ms-click="jumpPage($event,\'next\')" \n          ms-class="oni-state-disabled:lastPage==totalPages"\n          ms-text="nextText"\n          ></span>\n    <div class="oni-pager-jump" ms-if="showJumper">\n        <span class="oni-pager-text" ms-html="_getTotalPages(totalPages)"></span>\n        <div class="oni-pager-textbox-wrapper">\n            <input class="oni-pager-textbox" ms-duplex="_currentPage" data-duplex-event="change" ms-keyup="changeCurrentPage">\n        </div>\n        <span class="oni-pager-text">{{regional.pageText}}</span>\n        <button class="oni-pager-button" ms-click="changeCurrentPage" >{{regional.confirmText}}</button>\n    </div>\n</div>\n';});
-
 
 define('css!pager/avalon.pager',[],function(){});
 /**
@@ -10849,1631 +11643,1175 @@ define('dropdown/avalon.dropdown',["avalon",
  */
 ;
 
-define('css!button/avalon.button',[],function(){});
-// avalon 1.3.6
+define('text!loading/avalon.loading.html',[],function () { return '<div class="oni-helper-reset oni-helper-clearfix oni-widget">\n     <div class="oni-helper-reset oni-helper-clearfix oni-widget oni-loading-modal" \n          ms-class-100="oni-helper-max-index:toggle" \n          ms-if="modal" \n          ms-attr-id="\'modal\'+$loadingID" \n          style="z-index:999;" \n          ms-css-opacity="modalOpacity" \n          ms-css-background-color="modalBackground" \n          ms-visible="toggle">\n          <iframe allowTransparency="true" frameborder="none" src="javascript:\'\'"></iframe>\n          </div>\n     <div class="oni-helper-reset oni-helper-clearfix oni-widget oni-widget-content oni-loading" \n          ms-class-100="oni-helper-max-index:toggle" \n          ms-visible="toggle" \n          ms-css-width="width" \n          ms-css-height="height" \n          ms-css-margin-left="-width/2+\'px\'" \n          ms-css-margin-top="-height/2+\'px\'" \n          ms-attr-id="\'oni-loading-\'+$loadingID"><div \n          ms-css-width="width" \n          ms-css-height="height">{{MS_WIDGET_HTML}}</div></div>\n</div>';});
+
+
+define('text!loading/avalon.loading.bar.html',[],function () { return '{{MS_WIDGET_BALL}}\n<v:oval ms-repeat-item="data" style="position:absolute;" \n  ms-attr-strokecolor="color" \n  ms-attr-fillcolor="color" \n  ms-css-left="item.x + \'px\'" \n  ms-css-top="item.y + \'px\'" \n  ms-css-width="item.r * 2 + \'px\'" \n  ms-css-height="item.r * 2 + \'px\'">\n</v:oval>\n{{MS_WIDGET_DIVIDER}}\n<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">\n  <circle  \n          ms-attr-r="data[$index].r" \n          ms-attr-cx="data[$index].x+data[$index].r" \n          ms-attr-cy="data[$index].y+data[$index].r" \n          ms-repeat="data" \n          ms-attr-fill="color">\n      <animate attributeName="opacity" from="1" to=".1" repeatCount="indefinite" \n               ms-if="type==\'ball\'" \n               ms-attr-dur="svgDur" \n               ms-attr-begin="data[$index].begin"/>\n      <animate attributeName="r" repeatCount="indefinite" keySplines="0.2 0.2 0.4 0.8;0.2 0.2 0.4 0.8;0.2 0.2 0.4 0.8" calcMode="spline" \n               ms-attr-values="\'0;\'+data[$index].r+\';0;0\'"\n               ms-attr-dur="svgDur" \n               ms-if="type==\'spinning-bubbles\'" \n               ms-attr-begin="data[$index].begin"/>\n      <animate attributeName="r" repeatCount="indefinite" keytimes="0;0.2;0.7;1" keySplines="0.2 0.2 0.4 0.8;0.2 0.6 0.4 0.8;0.2 0.6 0.4 0.8" calcMode="spline" \n        ms-if="type==\'bubbles\'"\n        ms-attr-begin="data[$index].begin"  \n        ms-attr-dur="svgDur" \n        ms-attr-values="\'0;\'+data[$index].r+\';0;0\'" />\n  </circle>\n</svg>\n{{MS_WIDGET_TYPE}}\n{{MS_WIDGET_SPIN}}\n<v:oval stroked="true" filled="F" \n        ms-attr-strokecolor="color" \n        ms-css-height="width+\'px\'" \n        ms-css-width="width+\'px\'" \n        ms-css-opacity="opacity" \n        ms-attr-strokeweight="width / 2 - widthInner / 2+\'px\'" \n        ms-repeat="data" \n  style="position:absolute;z-index:2;left:0;top:0;"></v:oval>\n<v:arc stroked="true" filled="F" \n    ms-attr-strokecolor="color" \n    ms-attr-strokeweight="width / 2 - widthInner / 2+\'px\'" \n    style="position:absolute;z-index:3;text-indent:-1000px;overflow:hidden;left:0;top:0;" \n    ms-attr-startangle="startangle" \n    ms-attr-endangle="endangle" \n    ms-css-height="width+\'px\'" \n    ms-css-width="width+\'px\'" \n    ms-repeat="data">\n  </v:arc>\n{{MS_WIDGET_DIVIDER}}\n<svg width="100%" height="100%" version="1.1" xmlns="http://www.w3.org/2000/svg">\n  <path \n    ms-attr-d="arc" \n    ms-attr-stroke="color" \n    ms-attr-stroke-width="radius" \n    ms-attr-transform="\'rotate(0 \' + spinPoint +\')\'"\n    stroke-linejoin="round" fill="none">\n      <animateTransform attributeName="transform" repeatCount="indefinite" attributeType="XML" type="rotate" begin="0s" \n        ms-attr-from="0 + \' \' + spinPoint" \n        ms-attr-to="360 + \' \' + spinPoint" \n        ms-attr-dur="svgDur" />\n    </path>\n  <path stroke-linejoin="round" \n    ms-attr-d="circle" \n    ms-attr-stroke-width="radius" \n    ms-attr-stroke="color" \n    ms-css-opacity="opacity" \n    fill="none"></path>\n  </svg>\n{{MS_WIDGET_TYPE}}\n{{MS_WIDGET_SPINNING_SPIN}}\n<v:arc stroked="true" filled="F" \n    ms-attr-strokecolor="color" \n    ms-attr-strokeweight="radius+\'px\'" \n    style="position:absolute;z-index:3;text-indent:-1000px;overflow:hidden;left:0;top:0;" \n    ms-attr-startangle="item.startangle" \n    ms-attr-endangle="item.endangle" \n    ms-css-opacity="opacities[$index]" \n    ms-css-height="width+\'px\'" \n    ms-css-width="width+\'px\'" \n    ms-repeat-item="data">\n  </v:arc>\n{{MS_WIDGET_DIVIDER}}\n<svg width="100%" height="100%" version="1.1" xmlns="http://www.w3.org/2000/svg">\n  <path \n    ms-attr-d="arc" \n    ms-attr-stroke="color" \n    ms-attr-stroke-width="radius" \n    ms-attr-transform="item.rotate" \n    ms-repeat-item="data" \n    ms-css-opacity="opacities[$index]" \n    stroke-linejoin="round" fill="none">\n      <animate ms-if="0" attributeName="opacity" from="1" to=".2" repeatCount="indefinite" \n               ms-attr-dur="svgDur" \n               ms-attr-begin="item.begin"/>\n    </path>\n  </svg>\n{{MS_WIDGET_TYPE}}\n{{MS_WIDGET_SPOKES}}\n<v:rect style="position:absolute;"  \n        ms-attr-fillcolor="color" \n        ms-attr-strokecolor="color"  \n        ms-css-left="item.spokesLeft+\'px\'" \n        ms-css-top="item.spokesTop+\'px\'"\n        ms-css-width="spokesWidth+\'px\'" \n        ms-css-height="spokesHeight+\'px\'" \n        ms-css-rotation="item.spokesRotation" \n        ms-repeat-item="data">\n        <v:fill \n                ms-attr-color="color"></v:fill>\n  </v:rect>\n{{MS_WIDGET_DIVIDER}}\n<svg width="100%" height="100%" version="1.1" xmlns="http://www.w3.org/2000/svg">\n  <path opacity=".1" ms-attr-d="svgPath" \n      ms-attr-transform="data[$index].rotate" \n        ms-repeat="data" \n    ms-attr-fill="color">\n    <animate attributeName="opacity" from="1" to=".1" repeatCount="indefinite" \n             ms-attr-dur="svgDur" \n             ms-attr-begin="data[$index].begin"/></path>\n  </svg>\n{{MS_WIDGET_TYPE}}\n{{MS_WIDGET_IMG}}\n<img width="100%" height="100%" ms-attr-src="src">';});
+
+
+define('css!loading/avalon.loading',[],function(){});
 /**
- * 
- * @cnName 按钮组件
- * @enName button
+ * @cnName 加载效果组件
+ * @enName loading
  * @introduce
- * <p>按钮组件提供丰富的样式、形式选择，除与bootstrap可用的button样式保持一致外，支持small、default、big、large四种尺寸，同时支持图标button，可以是仅有图标的button，图标在左边的button、图标在右边的button、两边都有图标的button，当然也支持图标组，有水平图标组、垂直图标组两种形式</p>
+ *  <p> 实现各种加载动画效果
+</p>
  */
-define('button/avalon.button',["avalon", "css!../chameleon/oniui-common.css", "css!./avalon.button.css"], function(avalon) {
-    var baseClasses = ["oni-button", "oni-widget", "oni-state-default"],
-        typeClasses = "oni-button-icons-only oni-button-icon-only oni-button-text-icons oni-button-text-icon-primary oni-button-text-icon-secondary oni-button-text-only"
-
-    var widget = avalon.ui.button = function(element, data, vmodels) {
-        var options = data.buttonOptions,
-            btnModel,
-            $element = avalon(element)
-            
-        function stop(event) {
-            if (options.disabled) {
-                event.preventDefault()
-                event.stopImmediatePropagation()
+define('loading/avalon.loading',["avalon", "text!./avalon.loading.html", "text!./avalon.loading.bar.html", "css!./avalon.loading.css", "css!../chameleon/oniui-common.css"], function(avalon, template, ballTemplate) {
+    var widgetCount = 0, 
+        isIE = navigator.userAgent.match(/msie/ig) || ("ActiveXObject" in window),
+        _key = (99999 - Math.random() * 10000) >> 0,
+        templateCache = {},
+        parts = ballTemplate.split("{{MS_WIDGET_TYPE}}"),
+        _config = {}
+    // 通过addtype注册新的效果
+    // config里面是每个type特有的配置或者方法，mix到vm里
+    // drawser方法在注入html之前执行，主要用于生成绘图需要的数据
+    // effect方法用于setinterval动画效果
+    function addType(type, config, drawer, effect) {
+        config["drawer"] = drawer
+        config["effect"] = effect
+        _config[type] = config
+    }
+    function g(id) {
+        return document.getElementById(id)
+    }
+    avalon.each(parts, function(i, item) {
+        var type,
+                item = item.trim().replace(/^\{\{MS_WIDGET_[^\}]+\}\}/g, function(mat) {
+            type = mat.replace(/\{\{MS_WIDGET_|\}\}/g, "").replace(/_/g, "-").toLowerCase()
+            return ""
+        })
+        if (type) {
+            type = type
+            item = item.split("{{MS_WIDGET_DIVIDER}}")
+            templateCache[type] = {
+                "svg": item[1] || item[0],
+                "vml": item[0]
             }
         }
-        btnModel = {
-            $init: function() {
-                var data = options.data,
-                    elementType = "",
-                    label = options.label,
-                    buttonWidth = 0,
-                    elementTagName = element.tagName.toLowerCase()
-
-                if (options.groups && data.length > 1) {
-                    var buttons = ""
-                    
-                    data.forEach(function(button, index) {
-                        var buttonStr = "<span ms-widget='button'"
-                        if (button.type !== void 0) {
-                            buttonStr += " data-button-type='" + button.type + "'"
-                        }
-                        if (button.iconPosition !== void 0) {
-                            buttonStr += " data-button-icon-position='" + button.iconPosition + "'"
-                        }
-                        if (button.icon !== void 0) {
-                            buttonStr += " data-button-icon='" + button.icon + "'"
-                        }
-                        if (button.color !== void 0) {
-                            buttonStr += " data-button-color='" + button.color + "'"
-                        }
-                        if (button.size !== void 0) {
-                            buttonStr += " data-button-size='" + button.size + "'"
-                        }
-                        if (button.disabled !== void 0) {
-                            buttonStr += " data-button-disabled='" + button.disabled + "'"
-                        }
-                        if (button.label !== void 0) {
-                            buttonStr += " data-button-label='" + button.label + "'"
-                        }
-                        buttonStr += ">" + (button.text || "") + "</span>"
-                        buttons += buttonStr
-                    })
-                    element.innerHTML = buttons
-                    element.setAttribute("ms-widget", "buttonset")
-                    if (options.direction == "vertical") {
-                        element.setAttribute("data-buttonset-direction", "vertical")
+    })
+    // svg绘制圆弧
+    function circleValueList(r, bw, ct) {
+        var arr = [],
+                count = ct || 36,
+                r = r - bw,
+                arc,
+                x,
+                y,
+                res
+        for (var i = 0; i <= count; i++) {
+            arc = Math.PI / 2 - Math.PI * 2 / count * i
+            x = Math.cos(arc) * r + r * 1 + bw * 1
+            y = (1 - Math.sin(arc).toFixed(4)) * r + bw * 1
+            res = (i ? " L" : "M") + x + " " + y + (i == 100 ? "Z" : "")
+            arr.push(res)
+        }
+        return arr
+    }
+    // 注册ball，小球排列成一个圆
+    addType("ball", {
+        "width": 32,
+        "widthInner": 28,
+        count: 10, //@config type=ball，loading效果组成的小图形个数
+        interval: 120,//@config type=ball，毫秒数，动画效果帧间隔
+        circleMargin: 1,//@config type=ticks，小球之间的间距，单位是一倍小球半径
+        "svgDur": "1s"
+    }, function(vmodel) {
+        var type = vmodel.type,
+            count = vmodel.count,
+            width = vmodel.width,
+            radiusOut = width / 2,
+            interval = vmodel.interval,
+            radiusInner = (width - vmodel.widthInner) / 2
+        if(type === "ball") vmodel.svgDur = interval * count / 1000 + "s"
+        return function(loop) {
+            var angel = Math.PI * (0.5 - 2 * loop / count)
+            vmodel.data.push({
+                "x": (radiusOut - radiusInner) * 　(Math.cos(angel) + 1),
+                "y": (radiusInner - radiusOut) * (Math.sin(angel) - 1),
+                "r": radiusInner,
+                "begin": [interval * loop / 1000, "s"].join("")
+            }) 
+            vmodel.opacities.push((loop / count).toFixed(2))
+        }
+    }, function(vmodel, ele, tagList, callback) {
+        // only for ie
+        if(!isIE && (vmodel.type !== "ticks") && vmodel.type != "spinning-spin") return
+        var tagList = Array.isArray(tagList) ? tagList : ["circle", "oval"]
+            , tag = vmodel.svgSupport ? tagList[0] : tagList[1] 
+            , ele = ele.getElementsByTagName(tag)
+            , len = ele.length, index = len, eles = [], flag
+        avalon.each(ele, function(i, item) {
+            eles.push(avalon(item))
+            // fix ie 7-8 render bug...
+            if (i === len - 1 && !vmodel.svgSupport) {
+                item.style.display = "none"
+                item.style.display = "block"
+            }
+        })
+        if(vmodel.type === "ticks") {
+            index = 0;
+            return function() {
+                for(var i = 0; i < len; i++) {
+                    var op = i > index ? vmodel.opacities[1] : vmodel.opacities[0]
+                    if(eles[i]) {
+                        eles[i].css("visibility", op >= 1 ? "visible" : "hidden")
                     }
-                    if (!options.corner) {
-                        element.setAttribute("data-buttonset-corner", options.corner)
-                    }
-                    if (options.width) {
-                        element.setAttribute("data-buttonset-width", parseInt(options.width))
-                    }
-                    avalon.scan(element, vmodels)
-                    return
                 }
-                if (typeof options.disabled !== "boolean") {
-                    element.disabled = !!options.disabled
+                index++
+                if(index >= len) {
+                    index = -1
+                }
+            }
+        } 
+        // share for type=ball and type=spokes
+        return function() {
+            // 顺时针
+            index--
+            if (index < 0) {
+                index = len - 1
+            }
+            for (var i = 0; i < len; i++) {
+                if(callback) {
+                    callback(eles[i], i, index)
                 } else {
-                    element.disabled = options.disabled
+                    var op = vmodel.opacities[(i + index) % len] * 100 / 100
+                    eles[i] && eles[i].css("opacity", op)
                 }
-
-                if (elementTagName === "input") {
-                    elementType = "input"
-                }
-                if (buttonWidth = parseInt(options.width)) {
-                    element.style.width = buttonWidth + "px"
-                }
-                $element.bind("mousedown", function(event) {
-                    stop(event)
-                    $element.addClass("oni-state-active")
-                })
-                $element.bind("mouseup", function(event) {
-                    stop(event)
-                    $element.removeClass("oni-state-active")
-                })
-                $element.bind("blur", function() {
-                    $element.removeClass("oni-state-active")
-                    $element.removeClass("oni-state-focus");
-                })
-                $element.bind("focus", function() {
-                    $element.addClass("oni-state-focus");
-                })
-                if (!options.label) {
-                    label = elementType === "input" ? element.value : element.innerHTML
-                }
-                options.elementType = elementType
-                options.label = label
-                createButton(element, options)
-                avalon.scan(element, vmodels)
             }
         }
-        btnModel.$init()
-    }
-    avalon.ui.buttonset = function(element, data, vmodels) {
-        var options = data.buttonsetOptions,
-            buttonsetCorner = options.corner,
-            direction = options.direction,
-            $element = avalon(element)
+    })
+    // 注册ticks，小球排列成一行
+    addType("ticks", avalon.mix({}, _config["ball"], {
+        count: 3,//@config type=ticks，小球个数
+        height: 20,//@config type=ticks，高度
+        interval: 360 //@config type=ticks，毫秒数，动画效果帧间隔
+    }), function(vmodel) {
+        var count = vmodel.count,
+            rate = 2 + vmodel.circleMargin,
+            radiusInner = (vmodel.width - vmodel.widthInner) / 2,
+            marginLeft = (vmodel.width - radiusInner * ( 3 * count - 1)) / 2
+        return function(loop) {
+            vmodel.data.push({
+                "x": marginLeft + (loop * rate * radiusInner),
+                "y": vmodel.height / 2 - radiusInner,
+                "r": radiusInner,
+                "begin": [vmodel.interval * loop / 1000, "s"].join("")
+            })
+            vmodel.opacities.push(loop ? 0 : 1)
+        }
+    }, _config["ball"].effect)
+    templateCache["ticks"] = templateCache["ball"]
+    // 注册spin，圆环转圈
+    addType("spin", {
+        width: 32,
+        widthInner: 26,
+        angel: 90, //@config type=spin，转动的弧形的角度，单位是1度
+        arc: "",
+        circle: "",
+        radius: "",
+        opacity: 0.2, //@config type=spin，背景圆弧的透明度
+        startangle: 0, //@config type=spin，圆弧开始的角度，单位1度
+        endangle: 0,
+        interval: 36, //@config type=spin，毫秒数，动画效果帧间隔
+        $circleData: "",
+        $partsData: "",
+        spinPoint: "23 23",
+        svgDur: "1s",
+        data: [1]
+    }, function(vmodel) {
+        vmodel.radius = vmodel.width / 2 - vmodel.widthInner / 2
+        if(vmodel.svgSupport) {
+            vmodel.svgDur = vmodel.interval * 36 / 1000 + "s"
+            vmodel.spinPoint = [vmodel.width / 2, vmodel.width / 2].join(" ")
+            var circle = vmodel.$circleData = circleValueList(vmodel.width / 2, vmodel.width / 2 - vmodel.widthInner / 2),
+                    parts = vmodel.$partsData = circle.slice(0, Math.floor(vmodel.angel / 360 * (circle.length - 1)))
+            vmodel.arc = parts.join("")
+            vmodel.circle = circle.join("")
+        } else {
+            vmodel.startangle = 0
+            vmodel.endangle = vmodel.angel
+        }
+    }, function(vmodel, ele) {
+        // only for ie
+        if(!isIE) return
+        var angel = stepper = vmodel.angel
+        if(vmodel.svgSupport) {
+            var len = vmodel.$circleData.length, ele = avalon(ele.getElementsByTagName("path")[0])
+            angel = stepper = Math.floor(vmodel.angel / 360 * len)
+            return function() {
+                // 生成圆弧的点阵是36个点，因此步长用1就足够了
+                stepper+=1;
+                if(stepper >= len) stepper = 0
+                // 改用rotate属性
+                ele.attr("transform", "rotate(" + stepper * 10 + " " + vmodel.spinPoint + ")")
+            }
+        }
+        return function() {
+            stepper += 10
+            var startangle = stepper - angel
+            if (stepper > 360) {
+                stepper = stepper - 360
+                startangle = startangle - 360
+            }
+            vmodel.startangle = startangle
+            vmodel.endangle = stepper
+        }
+    })
+    // 注册小长方形圆形排列效果
+    addType("spokes", {
+        count: 8, //@config type=spokes，长方形个数
+        width: 32, //@config type=spokes，效果宽度,
+        spokesWidth: 4, //@config type=spokes，小长方形宽度
+        spokesHeight: 8, //@config type=spokes，小长方形高度
+        interval: 125, //@config type=spokes，效果动画间隔毫秒数
+        svgPath: "M14 0 H18 V8 H14 z",
+        svgDur: "1s"
+    },function(vmodel) {
+        var count = vmodel.count,w = vmodel.width, sw = vmodel.spokesWidth, sh = vmodel.spokesHeight, index = 0, interval = vmodel.interval;
+        if(vmodel.svgSupport) {
+            vmodel.svgPath = ["M", (w - sw) / 2, " 0 H", (w + sw) / 2, " V", sh, " H", (w - sw) / 2, " z"].join("")
+            vmodel.svgDur = interval * count / 1000 + "s"
+            var step = 360 / count
+            return function(loop) {
+                vmodel.data.push({     
+                    "begin": [interval * loop / 1000, "s"].join(""),
+                    "rotate": ["rotate(", loop * step, " ", [w / 2, w / 2].join(" ") + ")"].join("")
+                })
+                vmodel.opacities.push((loop / count).toFixed(2))
+            }
+        }
+        var step = Math.PI * 2 / count, angel, halfSw = sw / 2
+        return function(loop) {
+            angel = Math.PI / 2 - step * loop
+            var vsin = Math.sin(angel),
+                vcos = Math.cos(angel),
+                op = (loop / count).toFixed(2)
+            vmodel.data.push({
+                "spokesRotation": 360 * loop / count,
+                "spokesOpacity": op * 50,
+                "spokesLeft":(w / 2 - sw) * (1 + vcos),
+                "spokesTop": (w /2 - sw)  * (1 - vsin)
+            })
+            vmodel.opacities.push(op)
+        }
+    }, function(vmodel, ele) {
+        return _config["ball"].effect(vmodel, ele, ["path", "rect"])
+    })
+    // 注册小球排列成一个圆，半径变化
+    addType("spinning-bubbles", avalon.mix({}, _config["ball"], {
+        width: 64,//@config type=spinning-bubbles 宽度，小球的个数继承自type=ball
+        widthInner: 54,//@config type=spinning-bubbles 内宽
+        $zooms: []
+    }), function(vmodel) {
+        var drawer = _config["ball"].drawer(vmodel), count = vmodel.count
+        if(count >= 7) {
+            vmodel.$zooms = [0.2, 0.4, 0.8, 1, 0.8, 0.4, 0.2]
+        } else if(count >= 5) {
+            vmodel.$zooms = [0.2, 0.8, 1, 0.8, 0.2]
+        } else {
+            vmodel.$zooms = [1, 0.1, 0.1, 0.1]
+        }
+        while(vmodel.$zooms.length < vmodel.count) {
+            vmodel.$zooms.push(0.1)
+        }
+        return function(loop) {
+            drawer(loop)
+        }
+    }, function(vmodel, ele) {
+        var r = (vmodel.width - vmodel.widthInner) / 2, count = vmodel.count
+        if(vmodel.svgSupport) return _config["ball"].effect(vmodel, ele, ["circle", "oval"], function(ele, loop, step) {
+            ele.attr("r", r * vmodel.$zooms[(loop + step) % count])
+        })
+        return _config["ball"].effect(vmodel, ele, ["circle", "oval"], function(ele, loop, step) {
+            ele.css("zoom", vmodel.$zooms[(loop + step) % vmodel.count])
+        })
+    })
+    // 注册bubbles, 高级浏览器
+    addType("bubbles", avalon.mix({}, _config["spinning-bubbles"], {
+        height: 30, //@config type=bubbles 高度，宽度继承type=spinning-bubbles
+        widthInner:50,//@config type=bubbles 内宽
+        count: 3,//@config type=bubbles 球的个数
+        interval: 360,//@config type=bubbles 动画ms数
+        "circleMargin": 0.5//@config type=bubbles bubbles效果下个小球的间距
+    }), function(vmodel) {
+        _config["spinning-bubbles"].drawer(vmodel)
+        return _config["ticks"].drawer(vmodel)
+    }, _config["spinning-bubbles"].effect)
+    // 注册spinning-spin
+    addType("spinning-spin", avalon.mix({}, _config["spin"], {
+        opacities: [],
+        data: [],
+        radius: 1,
+        interval: _config["ball"].interval, //@config type=spinning-spin 帧间隔，继承ball
+        count: 8, //@config type=spinning-spin 小圆弧个数，一般请保证 360 / 8 % padding = 0
+        width: 46, //@config type=spinning-spin 圆外直径
+        widthInner: 38, //@config type=spinning-spin 圆内直径
+        padding: 5//@config type=spinning-spin 小圆弧间间隔的角度数
+    }), function(vmodel) {
+        var ct = 360 / vmodel.padding * 3, r = vmodel.width / 2, dt = circleValueList(r, r - vmodel.widthInner / 2, ct), count = vmodel.count, interval = vmodel.interval, step = 360 / count
+        vmodel.radius = vmodel.width / 2 - vmodel.widthInner / 2
+        function writeOp(loop) {
+            var cp = (loop / count).toFixed(2)
+            cp = cp > 0.6 ? cp : 0.2
+            vmodel.opacities.push(cp)
+        }
+        if(vmodel.svgSupport) {
+            vmodel.svgDur = interval * count / 1000 + "s"
+            vmodel.arc = dt.slice(0, Math.floor((1 / count - vmodel.padding / 360 ) * dt.length)).join("")
+            return function(loop) {
+                vmodel.data.push({
+                    rotate: "rotate(" + step * loop + " " + r + " " + r + ")",
+                    begin: [interval * loop / 1000, "s"].join("")
+                })
+                writeOp(loop)
+            }
+        }
+        return function(loop) {
+            vmodel.data.push({
+                startangle: loop / count * 360,
+                endangle: (loop + 1) / count * 360 - 10
+            })
+            writeOp(loop)
+        }
 
-        buttonsetCorner = buttonsetCorner !== void 0 ? buttonsetCorner : true
-        var btnGroup = {
-            $init: function() {
-                var elementClass = []
-                elementClass.push("oni-buttonset"),
-                firstButtonClass = "oni-corner-left",
-                lastButtonClass = "oni-corner-right",
-                children = element.childNodes, 
-                buttons = [] // 收集button组元素
-                buttonWidth = options.width,
-                firstElement = true
+    }, function(vmodel, ele) {
+        return _config["ball"].effect(vmodel, ele, ["path", "arc"])
+    })
+    // 注册自定义图片
+    addType("img", {
+        src: "https://source.qunarzz.com/piao/images/loading_camel.gif",//@config type=img，loading效果的gif图片
+        width: 52,//@config type=img，loading效果宽度
+        height: 39,//@config type=img，loading效果高度
+        miao: 0
+    }, void 0, void 0)
+    var svgSupport = !!document.createElementNS && !!document.createElementNS('http://www.w3.org/2000/svg', 'svg').createSVGRect
+    var widget = avalon.ui.loading = function(element, data, vmodels) {
 
-                for (var i = 0, el; el = children[i++]; ) {
-                    if (el.nodeType === 1) {
-                        el.setAttribute("data-button-corner", "false")
-                        buttons.push(el)
-                        if (firstElement) {
-                            avalon(el).addClass("oni-button-first")
-                            firstElement = false
+        var options = data.loadingOptions
+        //方便用户对原始模板进行修改,提高定制性
+        options.template = options.getTemplate(template, options)
+        if (!_config[options.type]) {
+            options.type = "ball"
+        }
+        // 读入各种效果的配置
+        avalon.each(_config[options.type], function(i, item) {
+            if (options[i] === void 0) options[i] = item
+        })
+
+        var vmodel = avalon.define(data.loadingId, function(vm) {
+            vm.height = ""
+            vm.width = ""
+            vm.data = []
+            vm.opacities = []
+            avalon.mix(vm, options)
+            vm.widgetElement = element
+            vm.rootElement = ""
+            vm.svgSupport = svgSupport
+            vm.$loadingID = widgetCount + "" + _key
+            vm.$timer = ""
+            vm.$skipArray = ["widgetElement", "template", "opacities", "data", "rootElement"]
+
+            var inited
+            vm.$init = function(continueScan) {
+                if (inited)
+                    return
+                inited = true
+                var id,
+                    container = options.container || vmodel.widgetElement,
+                    elementParent = ((avalon.type(container) === "object" && container.nodeType === 1 && document.body.contains(container)) ? container : document.getElementById(container)) || document.body,
+                    type = vmodel.type,
+                    // radiusOut = vmodel.width / 2,
+                    html = (templateCache[type]||templateCache["ball"])[vmodel.svgSupport ? "svg" : "vml"],
+                    index = 0
+                vmodel.width = vmodel.width == false ? vmodel.height : vmodel.width
+                vmodel.height = vmodel.height == false ? vmodel.width : vmodel.height
+                // 计算绘图数据
+                if(vmodel.drawer) {
+                    var loop = 0, drawer = vmodel.drawer(vmodel)
+                    while(loop < vmodel.count && drawer) {
+                        drawer(loop)
+                        loop++
+                    }
+                }
+                var frag = avalon.parseHTML(vmodel.template.replace("{{MS_WIDGET_HTML}}", html).replace("{{MS_WIDGET_ID}}", vmodel.$loadingID))
+                newDiv = frag.childNodes[0]
+                elementParent.appendChild(newDiv)
+                vm.rootElement = newDiv
+                avalon.log("avalon请尽快升到1.3.7+")
+                avalon.scan(elementParent, [vmodel].concat(vmodels))
+                if (typeof options.onInit === "function") {
+                    options.onInit.call(element, vmodel, options, vmodels)
+                }
+                vmodel._effect()
+            }
+            vm._effect = function() {
+                if (vmodel.toggle) {
+                    var ele = document.getElementById("oni-loading-" + vmodel.$loadingID)
+                    if (ele) {
+                        var effect = vmodel.effect && vmodel.effect(vmodel, ele)
+                        if(effect) {
+                            clearInterval(vmodel.$timer)
+                            vmodel.$timer = setInterval(effect, vmodel.interval)
                         }
                     }
                 }
-                var n = buttons.length
-                if (n && buttonsetCorner) {
-                    if (direction === "vertical") {
-                        firstButtonClass = "oni-corner-top"
-                        lastButtonClass = "oni-corner-bottom"
-                    }
-                    avalon(buttons[0]).addClass(firstButtonClass)
-                    avalon(buttons[n - 1]).addClass(lastButtonClass)
-                }
-                if (direction === "vertical") {
-                    elementClass.push("oni-buttonset-vertical")
-                }
-                $element.addClass(elementClass.join(" "))
-                data.buttons = buttons
-                avalon.scan(element, vmodels)
-                if (buttonWidth = parseInt(buttonWidth)) {
-                    (function(buttonWidth) {
-                        var btns = [].concat(buttons)
-                        setTimeout(function() {
-                            for (var i = 0; button = btns[i++];) {
-                                var $button = avalon(button),
-                                    buttonName = button.tagName.toLowerCase()
-                                if (buttonName === "input" || buttonName === "button") {
-                                    button.style.width = buttonWidth + "px"
-                                } else {
-                                    button.style.width = (buttonWidth - parseInt($button.css("border-left-width")) - parseInt($button.css("border-right-width")) - parseInt($button.css("padding-left")) * 2) + "px"
-                                }
-                            }
-                        }, 10)
-                    })(buttonWidth)
-                    return 
-                }
-
-                (function(buttons) {
-                    var interval = 0,
-                        maxButtonWidth = 0
-                    buttons = buttons.concat()
-                    interval = setInterval(function() {
-                        var buttonWidth = 0,
-                            innerWidth = 0,
-                            $button
-                        for (var i = 0, button; button = buttons[i++];) {
-                            buttonWidth = Math.max(buttonWidth, avalon(button).outerWidth())
-                        }
-                        if (buttonWidth === maxButtonWidth) {
-                            maxButtonWidth += 1
-                            for (var i = 0, button; button = buttons[i++];) {
-                                var buttonName = button.tagName.toLowerCase(),
-                                    $button = avalon(button)
-
-                                if (buttonName === "input" || buttonName === "button") {
-                                    button.style.width = maxButtonWidth + "px"
-                                    
-                                } else {
-                                    button.style.width = (maxButtonWidth - parseInt($button.css("border-left-width")) - parseInt($button.css("border-right-width")) - parseInt($button.css("padding-left")) * 2) + "px"
-                                }
-                            }
-                            clearInterval(interval)
-                            return 
-                        }
-                        maxButtonWidth = buttonWidth
-                    }, 100)
-                })(buttons)
             }
-        }
-        btnGroup.$init()
-    }
-    function createButton (element, options) {
-        var buttonText, 
-            buttonClasses = baseClasses.concat(),
-            iconText = false,
-            icons = options.icon || "",
-            corner = options.corner
+            vm.$remove = function() {
+                clearInterval(vmodel.$timer)
+                element.innerHTML = element.textContent = ""
+            }
 
-        options.label = options.label || ""
-        if (corner) {
-            buttonClasses.push("oni-corner-all")    
-            if (corner = parseInt(corner)) {
-                element.style.borderRadius = corner + "px"
-            }        
-        }
-        if (options.size) {
-            buttonClasses.push("oni-button-" + options.size)
-        }
-        if (options.color) {
-            buttonClasses.push("oni-button-" + options.color)
-        }
-        if (options.disabled) {
-            buttonClasses.push("oni-state-disabled")
-        }
-        avalon(element).addClass(buttonClasses.join(" "))
-        if (options.elementType === "input" && options.label) {
-            avalon(element).val(options.label)
-            
-            return
-        }
-        switch (options.type) {
-            case "text":
-                buttonText = "<span class='oni-button-text'>" + options.label + "</span>"
-                break;
-            case "labeledIcon": 
-                iconText = true
-            case "icon":
-                switch (options.iconPosition) {
-                    case "left": 
-                        buttonText = "<i class='oni-icon oni-icon-left'>" + icons.replace(/\\/g, "") + "</i>" + "<span class='oni-button-text oni-button-text-right" + (!iconText ? " oni-button-text-hidden" : "") + "'>" + options.label + "</span>"
-                    break;
-                    case "right":
-                        buttonText = "<span class='oni-button-text oni-button-text-left" + (!iconText ? " oni-button-text-hidden" : "") + "'>" + options.label + "</span>" + "<i class='oni-icon oni-icon-right'>" + icons.replace(/\\/g, "") + "</i>"
-                    break;
-                    case "left-right":
-                        var iconArr = icons && icons.split("-") || ["", ""],
-                            iconLeft = iconArr[0],
-                            iconRight = iconArr[1]
-                        buttonText = "<i class='oni-icon oni-icon-left'>" + iconLeft.replace(/\\/g, "") + "&nbsp;</i>" + "<span class='oni-button-text oni-button-text-middle" + (!iconText ? " oni-button-text-hidden" : "") + "'>" + options.label + "</span>" + "<i class='oni-icon oni-icon-right'>&nbsp;" + iconRight.replace(/\\/g, "") + "</i>"
-                    break;
-                }
-            break;
-        }
-        element.innerHTML = buttonText
+            //@interface showLoading() 显示loading效果
+            vm.showLoading = function() {
+                if (vmodel.toggle)
+                    return
+                vmodel.toggle = true
+                vmodel._effect()
+            }
+            //@interface hideLoading() 隐藏loading
+            vm.hideLoading = function() {
+                vmodel.toggle = false
+            }
+            //@interface destroyLoading() 销毁loading
+            vm.destroyLoading = function() {
+                vmodel.toggle = false
+                vmodel.$remove()
+            }
+            /**
+             * @interface 将loading效果插入到指定的容器里
+             * @param 目标容器元素，默认是绑定widget的元素
+             */
+            vm.appendTo = function(container) {
+                var cnt = container || vm.widgetElement,
+                    modal = g("modal" + vm.$id),
+                    loading = g("loading" + vm.$id)
+                if(modal) cnt.appendChild(modal)
+                if(loading) cnt.appendChild(loading)
+            }
+
+        })
+
+        vmodel.$watch("toggle", function(n) {
+            if (!n) {
+                clearInterval(vmodel.$timer)
+            } else {
+                vmodel._effect()
+            }
+        })
+      
+        widgetCount++
+
+        return vmodel
     }
-    widget.version = 1.0
     widget.defaults = {
-        groups: false, //@config 是否是button组
-        direction: "", //@config button组的方向，有水平button组和垂直button组，默认是水平，可以设置为"vertical"
-        /**
-         * @config <p>data属性配置button组的内容，每一个数组元素都是一个包含单个按钮基本信息的对象。</p>
-         * <p>注意，请只在button组由至少两个按钮组成时，才配置button组件为button组，也就是设置groups为true时，且配置相应的data</p>
-         * <p>当然还有一种直接列出button组内容的方式，不过这种情况需要指定组件名为buttonset，请看<a href="./avalon.button.ex4.html">demo 4</a>a></p>
-         * <pre>
-            data: [{
-                type: "labeledIcon",
-                iconPosition: "right",
-                icon: "\&\#xf04c;",
-                size: "large",
-                color: "success",
-                text: "暂停"
-            }, {
-                type: "labeledIcon",
-                iconPosition: "right",
-                icon: "\&\#xf04b;",
-                size: "large",
-                color: "success",
-                text: "播放"
-            }, {
-                type: "labeledIcon",
-                iconPosition: "right",
-                icon: "\&\#xf074;",
-                size: "large",
-                color: "success",
-                text: "拖曳"
-            }]                                
-         </pre>
-         */
-        data: [], 
-        type: "text", //@config 配置button的展示形式，仅文字展示，还是仅图标展示，或者文字加图标的展示方式，三种方式分别对应："text"、"icon"、"labeledIcon"
-        iconPosition: "left", //@config 当type为icon或者labeledIcon时，定义icon在哪边，默认在text的左边，也可以配置为右边("right"),或者两边都有("left-right")
-        icon: "", //@config  当type为icon或者labeledIcon时，定义展示icon的内容，本组件的icon是使用web font实现，当iconPosition为"left"或者"right"时，将icon的码赋给icon，当iconPosition为"left-right",将left icon与right icon的码以"-"分隔，比如data-button-icon="\&\#xf001;-\&\#xf06b;"
-        size: "", //@config button有四个尺寸"small", "default", "big", "large"
-        color: "", //@config 定义button的颜色，默认提供了"primary", "warning", "danger", "success", "info", "inverse", "default" 7中颜色，与bootstrap保持一致
-        corner: true, //@config 设置是否显示圆角，可以布尔值或者Number类型，布尔只是简单的说明显示或者不显示，Number则在表示显示与否的同时，也是在指定圆角的大小，圆角默认是2px。
-        style: "", // 用于定义button的展现形式，比如"flat" "glow" "rounded" "3D" "pill" 本组件，仅提供flat的实现
-        disabled: false, //@config 配置button的禁用状态
-        label: "", //@config 设置button的显示文字，label的优先级高于元素的innerHTML
-        width: "" //@config 设置button的宽度，注意button的盒模型设为了border-box
+        //@config onInit(vmodel, options, vmodels) 完成初始化之后的回调,call as element's method
+        onInit: avalon.noop,
+        color: "#619FE8", //@config 效果的颜色
+        type: "ball", //@config 类型，默认是ball，球，可取spin,ticks
+        toggle: true, //@config 是否显示
+        modal: true, //@config 是否显示遮罩
+        modalOpacity: 0.1, //@config 遮罩透明度
+        modalBackground: "#fff",//@config 遮罩背景色
+        container: void 0, //@config loading效果显示的容器，默认是绑定widget的元素
+        getTemplate: function(tmpl, opts, tplName) {
+            return tmpl
+        }, //@config getTemplate(tpl, opts, tplName) 定制修改模板接口
+        $author: "skipper@123"
+    }
+});
+
+define('css!simplegrid/avalon.simplegrid',[],function(){});
+//avalon 1.3.2 2014.4.2
+define('simplegrid/avalon.simplegrid',["avalon",
+    "text!./avalon.simplegrid.html",
+    "../pager/avalon.pager",
+    "../dropdown/avalon.dropdown",
+    "../loading/avalon.loading",
+    "../scrollbar/avalon.scrollbar",
+    "css!../chameleon/oniui-common.css",
+    "css!./avalon.simplegrid.css"
+], function(avalon, tmpl) {
+
+    //切割出表头与表身的模板
+    var gridTemplate = tmpl, theadTemplate, tbodyTemplate
+    gridTemplate = gridTemplate.replace(/MS_OPTION_THEAD_BEGIN([\s\S]+)MS_OPTION_THEAD_END/, function(a, b) {
+        theadTemplate = b
+        return "MS_OPTION_THEAD_HOLDER"
+    })
+    gridTemplate = gridTemplate.replace(/MS_OPTION_TBODY_BEGIN([\s\S]+)MS_OPTION_TBODY_END/, function(a, b) {
+        tbodyTemplate = b
+        return "MS_OPTION_TBODY_HOLDER"
+    })
+
+    var body = document.body || document.documentElement
+    var remptyfn = /^function\s+\w*\s*\([^)]*\)\s*{\s*}$/m
+
+    var widget = avalon.ui.simplegrid = function(element, data, vmodels) {
+        var options = data.simplegridOptions,
+                optId = +(new Date()),
+                scrollbarTimer
+        //格式化各列的具体规格
+        options.columns = options.getColumns(options.columns, options)
+
+        //允许指定表头与表身的每一行的模板
+        makeTemplate(options, "theadTemplate", theadTemplate)
+        makeTemplate(options, "tbodyTemplate", tbodyTemplate)
+        var template = gridTemplate.replace(/MS_OPTION_THEAD_HOLDER/, options.theadTemplate)
+                .replace(/MS_OPTION_TBODY_HOLDER/, options.tbodyTemplate)
+
+        //方便用户对原始模板进行修改,提高制定性
+        options.template = options.getTemplate(template, options).replace(/\{\{MS_OPTION_ID\}\}/g, optId)
+        //决定每页的行数(分页与滚动模式下都要用到它)
+        //<------开始配置分页的参数
+        if (typeof options.pager !== "object") {
+            options.pager = {}
+        } else {
+            options.pageable = true
+        }
+        var pager = options.pager
+        //抽取要显示的数据(因为可能存在分页,不用全部显示,那么我们只将要显示的
+        pager.perPages = options.pageable ? pager.perPages || options.data.length : options.data.length
+        pager.nextText = pager.nextText || "下一页"
+        pager.prevText = pager.prevText || "上一页"
+        
+        if (Array.isArray(pager.options)) {
+            pager.getTemplate = typeof pager.getTemplate === "function" ? pager.getTemplate : function(tmpl) {
+                return tmpl + '<div class="oni-simplegrid-pager-options">每页显示<select ms-widget="dropdown" data-dropdown-list-width="50" data-dropdown-width="50" ms-duplex="perPages"><option ms-repeat="options" ms-value="el.value">{{el.text}}</option></select>条,共{{totalItems}}条结果</div>'
+            }
+        }
+        makeBool(pager, "showJumper", true)
+        //如果还不满意可以通过getPager方法重写
+        options.pager = options.getPager(pager, options)
+        //-----结束配置分页的参数--------->
+        // 每页真实要显示的行数
+        options.showRows = options.showRows || pager.perPages
+        //如果没有指定各列的出现顺序,那么将按用户定义时的顺序输出
+
+        if (!Array.isArray(options.columnsOrder)) {
+            var orders = []
+            for (var i = 0, el; el = options.columns[i++]; ) {
+                orders.push(el.field)
+            }
+            options.columnsOrder = orders
+        } else if (options.syncTheadColumnsOrder) {
+
+            //如果用户指定columnsOrder,那么要对columns进行重排
+            orders = options.columnsOrder.concat()
+            var newColumns = [], oldColumns = options.columns, elem
+            while (el = orders.shift()) {
+                label:
+                        for (var k = 0, kn = oldColumns.length; k < kn; k++) {
+                    elem = oldColumns[k]
+                    if (elem.field == el) {
+                        newColumns.push(elem)
+                        oldColumns.splice(k, 1)
+                        break label
+                    }
+                }
+            }
+            options.columns = newColumns
+        }
+
+        var _vmodels
+        var loadingOpts = {
+            toggle: false,
+            onInit: function(vm, options, vmodels) {
+                vmodel.loadingVModel = vm;
+            }
+        }
+        options.loading = avalon.type(options.loading) === "object" ? avalon.mix(options.loading, loadingOpts) : loadingOpts
+        var vmodel = avalon.define(data.simplegridId, function(vm) {
+            avalon.mix(vm, options)
+            vm.$skipArray = ["_init", "widgetElement", "data", "addColumnCallbacks", "scrollPanel", "topTable", "bottomTable", "startIndex", "pager", "endIndex", "template", "loading", "loadingVModel", "rootElement"]
+            vm.loadingVModel = null
+            vm.widgetElement = element
+            vm.rootElement = ""
+            vm.gridWidth = "100%"
+            vm.startIndex = 0
+            vm.endIndex = options.showRows
+            vm.cssLeft = "0"
+            vm.barRight = 0
+            vm.scrollerHeight = void 0
+            vm.paddingBottom = "0"
+            vm.barUpdated = false
+            vm._data = []
+            vm._init = true
+            vm.$init = function() {
+                avalon.ready(function() {
+                    element.innerHTML = options.template.replace(/MS_OPTION_ID/g, vmodel.$id)
+                    _vmodels = [vmodel].concat(vmodels)
+                    vm.rootElement = element.getElementsByTagName("*")[0]
+                    avalon.scan(element, _vmodels)
+                    if (typeof options.onInit === "function") {
+                        options.onInit.call(element, vmodel, options, vmodels)
+                    }
+                })
+            }
+
+            vm._theadRenderedCallback = function() {
+                var fns = getHiddenParent(vm.widgetElement)
+                fns[0]()
+
+                //位于表头的data-repeat-rendered回调,用于得到table的宽度
+                var tr = this //这是TR元素
+                var tbody = this.parentNode//tbody
+                var table = tbody.parentNode//table
+                var cells = tr.children//在旧式IE下可能包含注释节点
+                var cellIndex = 0
+                for (var i = 0, cell; cell = cells[i++]; ) {
+                    if (cell.nodeType === 1 && cell["data-vm"]) {
+                        var c = vm.columns[cellIndex++]
+                        if (String(c.width).indexOf("%") === -1) {
+                            c.width = cell.offsetWidth
+                        }
+                    }
+                }
+                vm.topTable = table //重置真正的代表表头的table
+                vm.theadHeight = avalon(table).innerHeight()
+                vm.scrollPanel = table.parentNode.parentNode//重置包含两个table的会出现滚动条的容器对象
+
+                vm.gridWidth = Math.min(table.offsetWidth, vm.scrollPanel.offsetWidth) + 1
+                fns[1]()
+                vm.theadRenderedCallback.call(tbody, vmodel, options, vmodels)
+            }
+            vm._tbodyRenderedCallback = function(a) {
+                //取得tbody每一行的高
+                var tbody = this
+                function delay() {
+                    var cell = tbody.getElementsByTagName("td")[0] ||
+                            tbody.getElementsByTagName("th")[0]
+                    var fns = getHiddenParent(vm.widgetElement)
+                    fns[0]()
+                    var table = vm.bottomTable = tbody.parentNode;
+                    var noResultHeight = !vmodel._data.size() ? vmodel.noResultHeight : 0;
+                    //求出可见区的总高度
+                    vm.tbodyHeight = avalon(table).innerHeight() + noResultHeight
+                    //取得总行数,以免行数为0时, vm.tbodyHeight / rowCount 得出Infinite
+                    var rowCount = tbody.rows.length
+                    //求出每一行的高
+                    vm._rowHeight = rowCount ? vm.tbodyHeight / rowCount : 35
+                    //根据是否分页, 求得每页的行数
+                    var perPages = vm.pageable ? vm.pager.perPages : vm.data.length
+                    vm.tbodyScrollHeight = vm._rowHeight * perPages
+                    var borderHeight = cell ? Math.max(avalon.css(cell, "borderTopWidth", true),
+                            avalon.css(cell, "borderBottomWidth", true)) : 0
+                    vm._rowHeightNoBorders = vm._rowHeight - borderHeight * 2
+                    fns[1]()
+                    vm.tbodyRenderedCallback.call(tbody, vmodel, options, vmodels)
+                    // update scrollbar, if tbody rendered
+                    setTimeout(function() {
+                        vmodel.updateScrollbar(!vmodel.barUpdated)
+                        vmodel.barUpdated = true
+                    })
+
+                }
+                //如果使用border-collapse: collapse,可能有一条边的高度被吞掉
+                setTimeout(delay, 100)
+            }
+
+            //::loading相关::
+            vm.showLoading = function() {
+                vmodel.loadingVModel.toggle = true;
+            }
+            vm.hideLoading = function() {
+                vmodel.loadingVModel.toggle = false;
+            }
+
+
+            vm.startResize = function(e, el) {
+                //当移动到表头的右侧,改变光标的形状,表示它可以拖动改变列宽
+                if (options._drag || !el.resizable)
+                    return
+                var cell = avalon(this)
+                var dir = getDirection(e, cell, options)
+
+                options._cursor = cell.css("cursor") //保存原来的光标样式
+                if (dir === "") {
+                    options.canResize = false
+                    cell.css("cursor", "default")
+                } else {
+                    options.canResize = cell
+                    cell.css("cursor", dir + "-resize")//改变光标
+                }
+            }
+
+            vm.stopResize = function() {
+                if (options.canResize) {
+                    options.canResize.css("cursor", options._cursor); //还原光标样式
+                    // update scrollbar, after resize end
+                    vmodel.updateScrollbar("forceUpdate")
+                    delete options.canResize
+                }
+            }
+            //通过拖动改变列宽
+            vm.resizeColumn = function(e, el) {
+                var cell = options.canResize
+                if (cell) {//只有鼠标进入可拖动区域才能拖动
+                    if (typeof el.width !== "number") {
+                        el.width = cell[0].offsetWidth
+                    }
+                    var cellWidth = el.width
+                    var startX = e.pageX
+                    options._drag = true
+                    fixUserSelect()
+
+                    var gridWidth = vm.gridWidth
+                    var moveFn = avalon.bind(document, "mousemove", function(e) {
+                        if (options._drag) {
+                            e.preventDefault()
+                            var change = e.pageX - startX
+                            vm.gridWidth = gridWidth + change
+                            el.width = cellWidth + change
+                            // update scrollbar while table size changed right now
+                            vmodel.updateScrollbar("forceUpdate")
+                        }
+                    })
+
+                    var upFn = avalon.bind(document, "mouseup", function(e) {
+                        e.preventDefault()
+                        if (options._drag) {
+                            restoreUserSelect()
+                            delete options._drag
+                            vm.gridWidth = gridWidth + e.pageX - startX
+                            el.width = cellWidth + e.pageX - startX
+                            avalon.unbind(document, "mousemove", moveFn)
+                            avalon.unbind(document, "mouseup", upFn)
+                        }
+                    })
+                }
+
+            }
+            vm.sortIndex = NaN
+            vm.getArrow = function(el, $index) {
+                var sortIndex = vm.sortIndex
+                var asc = el.sortAsc
+                return  $index !== sortIndex ? "ndb" : asc ? "asc" : "desc"
+            }
+            //如果当前列可以排序，那么点击标题旁边的icon,将会调用此方法
+            vm.sortColumn = function(el, $index) {
+                vm.sortIndex = $index
+                var trend = el.sortAsc = !el.sortAsc
+                var field = el.field
+                var opts = vmodel.$model
+                trend = trend ? 1 : -1
+                if (typeof opts.remoteSort === "function" && !remptyfn.test(opts.remoteSort)) {
+                    vmodel.remoteSort(field, trend, vmodel)
+                } else if (typeof el.localSort === "function" && !remptyfn.test(el.localSort)) {// !isEmptyFn(el.localSort)
+                    //如果要在本地排序,并且指定排数函数
+                    vmodel._data.sort(function(a, b) {
+                        return trend * el.localSort(a, b, field, opts) || 0
+                    })
+                    if (typeof vmodel.onSort === "function") {
+                        setTimeout(function() {
+                            vmodel.onSort(vmodel)
+                        }, 500)
+                    }
+                } else {
+                    //否则默认处理
+                    vmodel._data.sort(function(a, b) {
+                        return trend * (a[field] - b[field]) || 0
+                    })
+                }
+            }
+            //得到要渲染出来的列的名字的数组
+            vm.getColumnsOrder = function() {
+                return vm.columnsOrder
+            }
+            //在指定列的位置添加一列
+            vm.addColumn = function(obj, i) {
+                var el = options.getColumns([obj], vm)[0]
+                var field = el.field
+                if (vm.columnsOrder.indexOf(field) === -1) {
+                    var index = parseInt(i, 10) || 0
+                    var defaultValue = el.defaultValue || ""
+                    vm.columns.splice(index, 0, el)
+                    vm.columnsOrder.splice(index, 0, field)
+                    vm.addColumnCallbacks[field] = function(array) {
+                        array.forEach(function(elem) {
+                            if (!elem.hasOwnProperty(field)) {
+                                elem[field] = defaultValue
+                            }
+                        })
+                    }
+                }
+                vm.reRender(vm.data, vm)
+            }
+
+            //得到可视区某一个格子的显示情况,长度,align
+            vm.getCellProperty = function(name, prop) {
+                for (var i = 0, el; el = vm.columns[i++]; ) {
+                    if (el.field === name) {
+                        return el[prop]
+                    }
+                }
+            }
+
+            //重新渲染表身
+            vm.throttleRenderTbody = function(n, o) {
+                vmodel.tbodyScrollTop = n
+                cancelAnimationFrame(requestID)
+                requestID = requestAnimationFrame(function() {
+                    reRenderTbody(n, o)
+                })
+            }
+            //::与滚动条相关::计算滚动条的高
+            vm.getScrollerHeight = function() {
+                var h = vmodel.tbodyScrollHeight + vmodel.tbodyScrollTop - vmodel.theadHeight,
+                        max = vmodel._rowHeight * vmodel.data.length
+                // 设置一个上限，修复回滚bug
+                h = h > max ? max : h
+                // until change is applied to element, change scrollerHeight
+                setTimeout(function(loop) {
+                    var _h = vmodel.getScrollbar().getScroller().css("height")
+                    if (h != _h && !loop) {
+                        arguments.callee(1)
+                        return
+                    }
+                    vmodel.scrollerHeight = h
+                }, 100)
+                return h
+            }
+
+            //::与滚动条相关:: 滚动条的相关配置项
+            vm.$spgScrollbarOpts = {
+                onScroll: function(n, o, dir) {
+                    // 竖直方向滚动
+                    if (dir == "v") {
+                        clearTimeout(scrollbarTimer)
+                        scrollbarTimer = setTimeout(function() {
+                            vmodel.throttleRenderTbody(n, o)
+                        }, 16)
+                    // 水平方向
+                    } else {
+                        vmodel.cssLeft = n == void 0 ? "auto" : -n + "px"
+                    }
+                },
+                //::与滚动条相关::得到表身的高?
+                // 计算滚动视图区的高度，表格这边由于表头是不参与滚动的，所有视图区域高度是表格高度 - 表头高度
+                viewHeightGetter: function(ele) {
+                    return ele.innerHeight() - vmodel.theadHeight
+                },
+                show: vm.showScrollbar
+            }
+            vm.getScrollbar = function() {
+                return avalon.vmodels["$simplegrid" + optId]
+            }
+            // update scrollbar
+            //     var scrollbarInited
+            vm.updateScrollbar = function(force) {
+                if (!force)
+                    return
+                var scrollbar = vmodel.getScrollbar(),
+                        scroller = scrollbar.getScroller()
+                if (scrollbar) {
+                    scrollbar.update()
+                }
+            }
+            vm.$watch("showRows", function(rows) {
+                vmodel.endIndex = rows
+            })
+        })
+
+
+        vmodel._data = vmodel.getStore(vmodel.data, vmodel)//.data.slice(vm.startIndex, vm.endIndex)
+        //<-----------开始渲染分页栏----------
+        if (vmodel.pageable) {
+            var flagPager = false
+            var intervalID = setInterval(function() {
+                var elem = document.getElementById("pager-" + vmodel.$id)
+                if (elem && !flagPager) {
+
+                    elem.setAttribute("ms-widget", "pager,pager-" + vmodel.$id)
+                    avalon(elem).addClass("oni-simplegrid-pager-wrapper")
+                    avalon.scan(elem, vmodel)
+                    flagPager = true
+                }
+                var pagerVM = avalon.vmodels["pager-" + vmodel.$id]
+                if (pagerVM) {
+                    vmodel.pager = pagerVM
+                    clearInterval(intervalID)
+                }
+            }, 100)
+        }
+        //-----------结束渲染分页栏---------->
+        //那一部分转换为监控数组就行,这样能大大提高性能)
+        var requestID,
+                prevScrollTop = 0,
+                lastRenderedScrollTop = 0
+
+        function reRenderTbody(n, o) {
+            // 不再读取scrollTop
+            // var panel = vmodel.scrollPanel
+            // var scrollTop = panel.scrollTop
+            var scrollTop = n
+            var scrollDir = scrollTop > prevScrollTop ? "down" : "up"
+            prevScrollTop = scrollTop
+            var distance = Math.abs(lastRenderedScrollTop - scrollTop)
+            var rowHeight = vmodel._rowHeight
+
+            if (distance >= vmodel._rowHeightNoBorders) {
+
+                var linage = distance / rowHeight
+                var integer = Math.floor(linage)//取得整数部分
+                var decimal = linage - integer//取得小数部分
+                if (decimal > 0.55) {//四舍五入
+                    integer += 1 //要添加或删除的行数
+                }
+                var length = vmodel.data.length, count = 0, showRows = vmodel.showRows
+                if (scrollDir === "down") {
+                    while (vmodel.endIndex + 1 < length) {
+                        vmodel.endIndex += 1
+                        vmodel.startIndex += 1
+                        count += 1
+                        var el = vmodel.data[vmodel.endIndex]
+                        // 优化，避免过度操作_data
+                        if (integer - count <= showRows) {
+                            vmodel._data.push(el)
+                            vmodel._data.shift()
+                        }
+                        if (count === integer) {
+                            break
+                        }
+                    }
+                } else {
+                    while (vmodel.startIndex >= 0) {
+                        vmodel.endIndex -= 1
+                        vmodel.startIndex -= 1
+                        count += 1
+                        var el = vmodel.data[vmodel.startIndex]
+
+                        // 优化，避免过度操作_data
+                        if (integer - count <= showRows) {
+                            vmodel._data.unshift(el)
+                            vmodel._data.pop()
+                        }
+                        if (count === integer) {
+                            break
+                        }
+                    }
+                }
+                // 不在设置panel的scrollTop
+                lastRenderedScrollTop = vmodel.tbodyScrollTop = vmodel.startIndex * rowHeight
+                // lastRenderedScrollTop = panel.scrollTop = vmodel.tbodyScrollTop = vmodel.startIndex * rowHeight
+            }
+        }
+        // 监听这个改变更靠谱
+        vmodel.$watch("scrollerHeight", function(n) {
+            if (n > 0) {
+                vmodel.getScrollbar().disabled = false
+                vmodel.getScrollbar().toggle = true
+                vmodel.updateScrollbar("forceUpdate")
+            } else {
+                vmodel.getScrollbar().disabled = true
+                vmodel.getScrollbar().toggle = false
+            }
+        })
+
+        return vmodel
+    }
+    widget.defaults = {
+        theadHeight: 35,
+        noResultHeight: 100,
+        tbodyScrollHeight: "auto",
+        rowClass: "even",
+        showScrollbar: "always", //滚动条什么时候显示，默认一直，可设置为never，scrolling
+        tbodyScrollTop: 0,
+        tbodyHeight: "auto",
+        evenClass: "even",
+        _rowHeight: 35, //实际行高,包含border什么的
+        _rowHeightNoBorders: 0,
+        columnWidth: 160,
+        edge: 15,
+        _data: [],
+        topTable: {},
+        bottomTable: {},
+        scrollPanel: {},
+        addColumnCallbacks: {},
+        pageable: false,
+        syncTheadColumnsOrder: true,
+        remoteSort: avalon.noop, //远程排数函数
+        noResultContent: "暂无结果",
+        theadRenderedCallback: function(vmodel, options, vmodels) {
+        },
+        tbodyRenderedCallback: function(vmodel, options, vmodels) {
+            if (vmodel._init) {
+                vmodel._init = false
+            } else {
+                vmodel.widgetElement.scrollIntoView()
+            }
+        },
+        renderCell: function(val, key, row) {
+            return val
+        },
+        getColumnTitle: function() {
+            return ""
+        },
+        getTemplate: function(tmpl, options) {
+            return tmpl
+        },
+        reRender: function(data, vm) {
+            vm.showRows = vm.showRows || vm.perPages || data.length;
+
+            avalon.each(vm.addColumnCallbacks, function(n, fn) {
+                fn(data)
+            })
+            vm.data = data
+            vm._data = vm.getStore(data, vm)
+            if (typeof vm.onSort === "function") {
+                setTimeout(function() {
+                    vm.onSort(vm)
+                }, 500)
+            }
+        },
+        getStore: function(array, vm) {
+            return  array.slice(vm.startIndex, vm.endIndex)
+        },
+        getColumn: function(el, options) {
+            return el
+        },
+        getPager: function(pager, options) {
+            return pager
+        },
+        getColumns: function(array, options) {
+            var ret = []
+            for (var i = 0, el; el = array[i++]; ) {
+                //如果是字符串数组转换为对象数组,原来的值变成新对象的field属性
+                if (typeof el === "string") {
+                    el = {
+                        field: el
+                    }
+                }//field用于关联data中的字段
+                el.text = el.text || el.field//真正在表格里显示的内容
+                el.title = options.getColumnTitle(el)//当前当元素格的title属性
+                el.width = el.width || options.columnWidth//指定宽度,可以是百分比
+                el.className = el.className || ""//当前当元素格添加额外类名
+                el.align = el.align || "" //赋给align属性,表示是对齐方向 left, right, center
+                el.localSort = typeof el.localSort === "function" ? el.localSort : false//当前列的排序函数
+                makeBool(el, "sortable", true)//能否排序
+                makeBool(el, "resizable", false)//能否改变列宽
+                makeBool(el, "sortAsc", true)//排序方向
+                makeBool(el, "toggle", true)//是否显示当前列
+                makeBool(el, "disabledToggle")//禁止改变当前列的显示状态
+                makeBool(el, "disabledResize")//禁止改变当前列的宽度
+
+                options.getColumn(el, options)
+
+                ret.push(el)
+            }
+            return ret
+        }
+    }
+
+    var fixUserSelect = function() {
+        avalon(body).addClass("oni-helper-noselect")
+    }
+    var restoreUserSelect = function() {
+        avalon(body).removeClass("oni-helper-noselect")
+    }
+    if (window.VBArray && !("msUserSelect" in document.documentElement.style)) {
+        var _ieSelectBack;//fix IE6789
+        function returnFalse(event) {
+            event.returnValue = false
+        }
+        fixUserSelect = function() {
+            _ieSelectBack = body.onselectstart;
+            body.onselectstart = returnFalse;
+        }
+        restoreUserSelect = function() {
+            body.onselectstart = _ieSelectBack;
+        }
+    }
+
+    //优化scroll事件的回调次数
+    var requestAnimationFrame = window.requestAnimationFrame ||
+            function(callback) {
+                return window.setTimeout(callback, 1000 / 60);
+            }
+    var cancelAnimationFrame = window.cancelAnimationFrame ||
+            function(id) {
+                clearTimeout(id)
+            }
+
+    //得到移动的方向
+    function getDirection(e, target, data) {
+        var dir = "";
+        var offset = target.offset();
+        var width = target[0].offsetWidth;
+        var edge = data.edge;
+        if (e.pageX < offset.left + width && e.pageX > offset.left + width - edge) {
+            dir = "e";
+        }
+        return dir === "e" ? dir : ""
+    }
+    function makeBool(elem, name, value) {
+        value = !!value
+        elem[name] = typeof elem[name] === "boolean" ? elem[name] : value
+    }
+    function getHiddenParent(parent) {
+        do {
+            if (avalon(parent).css("display") === "none") {
+                var oldV, $parent = avalon(parent)
+                return [function show() {
+                        $parent.css("display", "block")
+                        oldV = $parent.css("visibility")
+                    }, function hide() {
+                        $parent.css("display", "none")
+                        $parent.css("visibility", oldV)
+                    }]
+            }
+            if (parent.tagName === "BODY") {
+                break
+            }
+        } while (parent = parent.parentNode);
+        return [avalon.noop, avalon.noop]
+    }
+
+
+    function makeTemplate(opts, name, value) {
+        opts[name] = typeof opts[name] === "function" ? opts[name](value, opts) :
+                (typeof opts[name] === "string" ? opts[name] : value)
     }
     return avalon
 })
 /**
- @links
- [设置button的大小、宽度，展示不同类型的button](avalon.button.ex1.html)
- [设置button的width和color](avalon.button.ex2.html)
- [通过ms-widget="button, $, buttonConfig"的方式设置button组](avalon.button.ex3.html)
- [通过ms-widget="buttonset"的方式设置button](avalon.button.ex4.html)
+ * 参考链接
+ 阿里大数据的UI设计稿
+ http://www.cnblogs.com/xuxiace/archive/2012/03/07/2383180.html
+ Onion UI 控件集 
+ http://wiki.corp.qunar.com/pages/viewpage.action?pageId=49957733
+ http://wiki.corp.qunar.com/pages/viewpage.action?pageId=49956129
+ 来往
+ http://m.laiwang.com/market/laiwang/event-square.php?spm=0.0.0.0.Hg4P8X
+ 
+ ExtJS初级教程之ExtJS Grid(二)
+ 
+ http://blog.csdn.net/letthinking/article/details/6321767
+ 
+ http://wenku.baidu.com/view/2f30e882e53a580216fcfe34.html
+ 
+ http://ued.taobao.org/blog/2013/03/modular-scalable-kissy/
+ 
+ http://gist.corp.qunar.com/jifeng.yao/gist/demos/pager/pager.html
+ //http://www.datatables.net/
+ 各种UI的比例
+ http://www.cnblogs.com/xuanye/archive/2009/11/04/1596244.html
+ jQueryUI theme体系调研 http://hi.baidu.com/ivugogo/item/605795f7a5c27a1ea62988e4?qq-pf-to=pcqq.discussion
  */
+
 ;
-
-define('css!smartgrid/avalon.smartgrid',[],function(){});
-// avalon 1.3.6
-/**
- *
- * @cnName 表格
- * @enName smartgrid
- * @introduce
- *    <p>smartgrid与simplegrid最大的不同是数据的渲染是通过静态模板实现的，当然也可以方便的实现动态更新视图。同时smartgrid实现了grid adapter的所有功能，不过部分使用方式会有些差异，下面会详细说明</p>
- */
-define('smartgrid/avalon.smartgrid',["avalon",
-    "text!./avalon.smartgrid.html",
-    "../loading/avalon.loading",
-    "../pager/avalon.pager",
-    "../dropdown/avalon.dropdown",
-    "../button/avalon.button",
-    "css!../chameleon/oniui-common.css",
-    "css!./avalon.smartgrid.css",
-], function(avalon, template) {
-    var regional = {
-        confirmText: '确定',
-        cancelText: '取消',
-        optDefaultText: '默认',
-        optAllText: '全部',
-        optCustomText: '自定义',
-        noDataText: '暂时没有数据',
-        loadingText: '数据读取中',
-        pagerSizeText: '每页显示',
-        pagerUnitText: '条',
-        pagerResultText: '条结果'
-    }
-
-    var tempId = new Date() - 0, templateArr = template.split('MS_OPTION_EJS'), gridHeader = templateArr[0],
-        // 表格视图结构
-        userAgent = (window.navigator.userAgent || '').toLowerCase(), positionAbsolute = userAgent.indexOf('msie 6') !== -1 || userAgent.indexOf('msie 7') !== -1, remptyfn = /^function\s+\w*\s*\([^)]*\)\s*{\s*}$/m, sorting = false,
-        // 页面在排序的时候不用更新排序icon的状态为ndb，但如果是重新渲染数据的话重置icon状态为ndb
-        callbacksNeedRemove = {};
-    template = templateArr[1];
-    // 静态模板渲染部分view
-    var EJS = avalon.ejs = function (id, data, opts) {
-            var el, source;
-            if (!EJS.cache[id]) {
-                opts = opts || {};
-                var doc = opts.doc || document;
-                data = data || {};
-                if ($.fn) {
-                    //如果引入jQuery, mass
-                    el = $(id, doc)[0];
-                } else if (doc.querySelectorAll) {
-                    //如果是IE8+与标准浏览器
-                    el = doc.querySelectorAll(id)[0];
-                } else {
-                    el = doc.getElementById(id.slice(1));
-                }
-                if (!el)
-                    throw 'can not find the target element';
-                source = el.innerHTML;
-                if (!/script|textarea/i.test(el.tagName)) {
-                    source = avalon.filters.unescape(source);
-                }
-                var fn = EJS.compile(source, opts);
-                ejs.cache[id] = fn;
-            }
-            return ejs.cache[id](data);
-        };
-    //如果第二配置对象指定了tid，则使用它对应的编译模板
-    EJS.compile = function (source, opts) {
-        opts = opts || {};
-        var tid = opts.tid;
-        if (typeof tid === 'string' && typeof EJS.cache[tid] == 'function') {
-            return EJS.cache[tid];
-        }
-        var open = opts.open || '<&';
-        var close = opts.close || '&>';
-        var helperNames = [], helpers = [];
-        for (var name in opts) {
-            if (opts.hasOwnProperty(name) && typeof opts[name] == 'function') {
-                helperNames.push(name);
-                helpers.push(opts[name]);
-            }
-        }
-        var flag = true;
-        //判定是否位于前定界符的左边
-        var codes = [];
-        //用于放置源码模板中普通文本片断
-        var time = new Date() * 1;
-        // 时间截,用于构建codes数组的引用变量
-        var prefix = ' ;r += txt' + time + '[';
-        //渲染函数输出部分的前面
-        var postfix = '];';
-        //渲染函数输出部分的后面
-        var t = 'return function(data){\'use strict\'; try{var r = \'\',line' + time + ' = 0;';
-        //渲染函数的最开始部分
-        var rAt = /(^|[^\w\u00c0-\uFFFF_])(@)(?=\w)/g;
-        var rstr = /(['"])(?:\\[\s\S]|[^\ \\r\n])*?\1/g;
-        // /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/
-        var rtrim = /(^-|-$)/g;
-        var rmass = /mass/;
-        var js = [];
-        var pre = 0, cur, code, trim;
-        for (var i = 0, n = source.length; i < n;) {
-            cur = source.indexOf(flag ? open : close, i);
-            if (cur < pre) {
-                if (flag) {
-                    //取得最末尾的HTML片断
-                    t += prefix + codes.length + postfix;
-                    code = source.slice(pre + close.length);
-                    if (trim) {
-                        code = code.trim();
-                        trim = false;
-                    }
-                    codes.push(code);
-                } else {
-                    throw Error('\u53D1\u751F\u9519\u8BEF\u4E86');
-                }
-                break;
-            }
-            code = source.slice(i, cur);
-            //截取前后定界符之间的片断
-            pre = cur;
-            if (flag) {
-                //取得HTML片断
-                t += prefix + codes.length + postfix;
-                if (trim) {
-                    code = code.trim();
-                    trim = false;
-                }
-                codes.push(code);
-                i = cur + open.length;
-            } else {
-                //取得javascript罗辑
-                js.push(code);
-                t += ';line' + time + '=' + js.length + ';';
-                switch (code.charAt(0)) {
-                case '=':
-                    //直接输出
-                    code = code.replace(rtrim, function () {
-                        trim = true;
-                        return '';
-                    });
-                    code = code.replace(rAt, '$1data.');
-                    if (code.indexOf('|') > 1) {
-                        //使用过滤器
-                        var arr = [];
-                        var str = code.replace(rstr, function (str) {
-                                arr.push(str);
-                                //先收拾所有字符串字面量
-                                return 'mass';
-                            }).replace(/\|\|/g, '@');
-                        //再收拾所有短路或
-                        if (str.indexOf('|') > 1) {
-                            var segments = str.split('|');
-                            var filtered = segments.shift().replace(/\@/g, '||').replace(rmass, function () {
-                                    return arr.shift();
-                                });
-                            for (var filter; filter = arr.shift();) {
-                                segments = filter.split(':');
-                                name = segments[0];
-                                args = '';
-                                if (segments[1]) {
-                                    args = ', ' + segments[1].replace(rmass, function () {
-                                        return arr.shift();    //还原
-                                    });
-                                }
-                                filtered = 'avalon.filters.' + name + '(' + filtered + args + ')';
-                            }
-                            code = '=' + filtered;
-                        }
-                    }
-                    t += ' ;r +' + code + ';';
-                    break;
-                case '#':
-                    //注释,不输出
-                    break;
-                case '-':
-                default:
-                    //普通逻辑,不输出
-                    code = code.replace(rtrim, function () {
-                        trim = true;
-                        return '';
-                    });
-                    t += code.replace(rAt, '$1data.');
-                    break;
-                }
-                i = cur + close.length;
-            }
-            flag = !flag;
-        }
-        t += ' return r; }catch(e){ avalon.log(e);\navalon.log(js' + time + '[line' + time + '-1]) }}';
-        var body = [
-                'txt' + time,
-                'js' + time,
-                'filters'
-            ];
-        var fn = Function.apply(Function, body.concat(helperNames, t));
-        var args = [
-                codes,
-                js,
-                avalon.filters
-            ];
-        var compiled = fn.apply(this, args.concat(helpers));
-        if (typeof tid === 'string') {
-            return EJS.cache[tid] = compiled;
-        }
-        return compiled;
-    };
-    EJS.cache = {};
-    //用于保存编译好的模板函数
-    avalon.filters.unescape = function (target) {
-        return target.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-        //处理转义的中文和实体字符
-        return target.replace(/&#([\d]+);/g, function ($0, $1) {
-            return String.fromCharCode(parseInt($1, 10));
-        });
-    };
-    var cnt = 0;
-    function guid() {
-        return 'smartgridTr' + cnt++;
-    }
-    var countter = 0;
-    var widget = avalon.ui.smartgrid = function (element, data, vmodels) {
-            var options = data.smartgridOptions, $element = avalon(element), pager = options.pager, vmId = data.smartgridId, gridEle, containerWrapper, smartgridHeader, $initRender = true, _dataVM, _data = [];
-            options._parentContainer = null;
-            options._parentContainerWidth = 0;
-            if (typeof options.data === 'number') {
-                for (var i = 0, v; v = vmodels[i++];) {
-                    if (v._uiName && v._uiName === 'smartgrid') {
-                        options.data = v.data[options.data][options.field] || [];
-                        break;
-                    }
-                }
-            }
-            initContainer(options, element);
-            perfectColumns(options, element, vmId);
-            options._position = positionAbsolute ? 'absolute' : 'fixed';
-            options.$pagerConfig = {
-                canChangePageSize: true,
-                options: [
-                    10,
-                    20,
-                    50,
-                    100
-                ],
-                //默认[10,20,50,100]
-                onInit: function (pagerVM, options, vmodels) {
-                    vmodel && (vmodel.pager = pagerVM);
-                }
-            };
-            options.pageable = options.pageable !== void 0 ? options.pageable : true;
-            if (avalon.type(pager) === 'object') {
-                if (options.pageable) {
-                    pager.getTemplate = typeof pager.getTemplate === 'function' ? pager.getTemplate : function (tmpl, options) {
-                        var optionsStr = '';
-                        if (Array.isArray(pager.options) && options.canChangePageSize) {
-                            optionsStr = '<div class="oni-smartgrid-pager-options"><div class="oni-smartgrid-showinfo">'
-                                + regional.pagerSizeText
-                                + '</div><select ms-widget="dropdown" data-dropdown-list-width="50" data-dropdown-width="50" ms-duplex="perPages">'
-                                + '<option ms-repeat="options" ms-value="el.value" ms-attr-label="el.value">{{el.text}}</option></select>'
-                                + '<div class="oni-smartgrid-showinfo">' + regional.pagerUnitText + ', {{totalItems}}'
-                                + regional.pagerResultText + '</div></div>';
-                        } else {
-                            optionsStr = '<div class="oni-smartgrid-pager-options">{{totalItems}}\u6761\u7ED3\u679C</div>';
-                        }
-                        return tmpl + optionsStr;
-                    };
-                }
-                if (pager.onInit && typeof pager.onInit === 'function') {
-                    var onInit = pager.onInit;
-                    pager.onInit = function (pagerVM, options, vmodels) {
-                        vmodel && (vmodel.pager = pagerVM);
-                        onInit(pagerVM, options, vmodels);
-                    };
-                }
-                avalon.mix(options.$pagerConfig, pager);
-            }
-            options.pager = null;
-            //方便用户对原始模板进行修改,提高制定性
-            options.template = options.getTemplate(template, options);
-            options.$skipArray = [
-                'smartgrid',
-                '_uiName',
-                '_allEnabledData',
-                'template',
-                'widgetElement',
-                'container',
-                'htmlHelper',
-                'selectable',
-                'pageable',
-                'noResult',
-                'sortable',
-                'pager',
-                'data',
-                // 一定不要去掉啊，去掉了就会出错
-                '_disabledData',
-                '_enabledData',
-                '_filterCheckboxData',
-                'maxGridWidth',
-                'bodyHeight',
-                '_parentContainer',
-                '_parentContainerWidth'
-            ].concat(options.$skipArray);
-            var vmodel = avalon.define(vmId, function (vm) {
-                    avalon.mix(vm, options);
-                    vm.widgetElement = element;
-                    vm._headerTop = 0 + options.affixHeight;
-                    vm._fixHeaderToggle = false;
-                    vm._gridWidth = 'auto';
-                    vm._pagerShow = false;
-                    vm._allEnabledData = [];
-                    vm._disabledData = [];
-                    vm._enabledData = [];
-                    vm._filterCheckboxData = [];
-                    vm._dataRender = false;
-                    vm.perPages = void 0;
-                    vm.maxGridWidth = 0;
-                    vm.$headerElement = null;
-                    vm.adjustColumnWidth = function(){return adjustColumnWidth(vmodel)};
-                    vm._hiddenAffixHeader = function (column, allChecked) {
-                        var selectable = vmodel.selectable;
-                        return selectable && selectable.type && column.key == 'selected' && !allChecked;
-                    };
-                    /**
-             * @interface 获取表格数据,当然也可以通过vmodel.data直接获得表格数据
-             */
-                    vm.getRawData = function () {
-                        return vmodel.data;
-                    };
-                    /**
-             * @interface 获取选中表格行的数据集合
-             */
-                    vm.getSelected = function () {
-                        var disabledData = vmodel._disabledData, selectedData = [];
-                        disabledData.forEach(function (dataItem, index) {
-                            if (dataItem.selected) {
-                                selectedData.push(dataItem);
-                            }
-                        });
-                        return selectedData.concat(vmodel._enabledData);
-                    };
-                    /**
-             * @interface {Function} 全选表格，或者全不选
-             * @param b {Boolean} true表示全选，false表示全不选，为空时以true对待
-             */
-                    vm.selectAll = function (b) {
-                        b = b !== void 0 ? b : true;
-                        vmodel._selectAll(null, b);
-                    };
-                    /**
-             * @interface {Function} 判断表过是否全选
-             * @returns {Boolean} true表示全选，false表示全不选
-             */
-                    vm.isSelectAll = function () {
-                        return vmodel._allSelected;
-                    };
-                    vm.sortColumn = function (column, index, event) {
-                        var target = event.target, $target = avalon(target), sortTrend = '', field = column.key, trend = 0, onColumnSort = vmodel.onColumnSort;
-                        if (!vmodel.data.length)
-                            return;
-                        if ($target.hasClass('oni-helper-sort-top')) {
-                            sortTrend = 'asc';
-                        } else {
-                            sortTrend = 'desc';
-                        }
-                        sorting = true;
-                        sortTrend == 'asc' ? trend = 1 : trend = -1;
-                        column.sortTrend = sortTrend;
-                        if (vmodel.sortable.remoteSort && typeof vmodel.remoteSort === 'function' && !remptyfn.test(vmodel.remoteSort)) {
-                            vmodel.remoteSort(field, sortTrend, vmodel);
-                            // onColumnSort回调对于远程排序的最好时机是在remoteSort中数据渲染之后自行处理
-                            ;
-                        } else if (typeof column.localSort === 'function' && !remptyfn.test(column.localSort)) {
-                            // !isEmptyFn(el.localSort)
-                            //如果要在本地排序,并且指定排数函数
-                            vmodel.data.sort(function (a, b) {
-                                return trend * column.localSort(a, b, field, vmodel.$model) || 0;
-                            });
-                            vmodel.render();
-                            if (avalon.type(onColumnSort) === 'function') {
-                                onColumnSort.call(vmodel, sortTrend, field);
-                            }
-                        } else {
-                            //否则默认处理
-                            if (column.type === 'Number') {
-                                vmodel.data.sort(function (a, b) {
-                                    return trend * (a[field] - b[field]) || 0;
-                                });
-                            } else {
-                                vmodel.data.sort(function (a, b) {
-                                    try {
-                                        return trend * a[field].localeCompare(b[field]);
-                                    } catch (e) {
-                                        return trend * (a[field] - b[field]) || 0;
-                                    }
-                                });
-                            }
-                            vmodel.render();
-                            if (avalon.type(onColumnSort) === 'function') {
-                                onColumnSort.call(vmodel, sortTrend, field);
-                            }
-                        }
-                    };
-                    /**
-             * @interface {Function} 设置列的显示或者隐藏
-             * @param columns {String|Array} 可以是字符串，也可以是数组，列出要设置的列的key值
-             * @param b {Boolean} true为显示列，false为隐藏列，设置了列的isLock属性为ture时始终显示列
-             */
-                    vm.setColumns = function (columns, b) {
-                        var columnsOption = vmodel.columns;
-                        columns = [].concat(columns);
-                        b = b !== void 0 ? b : true;
-                        for (var i = 0, len = columnsOption.length; i < len; i++) {
-                            var column = columnsOption[i], key = column.$model.key, keyIndex = columns.indexOf(key);
-                            if (keyIndex != -1 && !column.isLock) {
-                                column.toggle = b;
-                            }
-                        }
-                        adjustColumnWidth(vmodel);
-                    };
-                    /**
-             * @interface {Function} 调用此方法清空表格数据
-             * @param text {String} 无数据情况下的说明文字，默认为“暂时没有数据”
-             */
-                    vm.showNoResult = function (text) {
-                        // 只要数据为空组件会自动showNoResult,考虑到使用习惯保留了showNoResult，不过其实完全可以不用
-                        vmodel.noResult = text || vmodel.noResult;
-                        vmodel.data = [];
-                        vmodel.render();
-                    };
-                    /**
-             * @interface {Function} 显示缓冲提示
-             */
-                    vm.showLoading = function () {
-                        // vmodel.loadingVModel.toggle = true; // TODO
-                    };
-                    /**
-             * @interface {Function} 隐藏缓冲提示
-             */
-                    vm.hideLoading = function () {
-                        // vmodel.loadingVModel.toggle = false; // TODO
-                    };
-                    /**
-             * 响应window.resize以调整宽度为百分比的内容
-             */
-                    vm._adjustColWidth = function () {
-                        var cols = vmodel.columns, parentWidth = avalon(vmodel.container.parentNode).width();
-                        for (var i = 0, len = cols.length; i < len; i++) {
-                            var col = cols[i];
-                            if (String(col.originalWidth).indexOf('%') !== -1) {
-                                col.width = Math.floor(parentWidth * parseInt(col.originalWidth, 10) / 100) - 1;
-                            }
-                        }
-                    };
-                    vm._selectAll = function (event, selected) {
-                        var datas = vmodel.data, rows = containerWrapper.children, onSelectAll = vmodel.onSelectAll, val = event ? event.target.checked : selected, enableData = datas.concat();
-                        for (var i = 0, len = rows.length; i < len; i++) {
-                            var row = rows[i], $row = avalon(row);
-                            if (!$row.hasClass('oni-smartgrid-row')) {
-                                continue;
-                            }
-                            var input = row.children[0].getElementsByTagName('input')[0], dataIndex = input && avalon(input).attr('data-index'), data;
-                            if (dataIndex !== null && dataIndex !== void 0) {
-                                data = datas[dataIndex];
-                                if (!data.disable) {
-                                    data.selected = val;
-                                    input.checked = val;
-                                    $row[val ? 'addClass' : 'removeClass']('oni-smartgrid-selected');
-                                }
-                            } else {
-                                continue;
-                            }
-                        }
-                        if (val) {
-                            vmodel._enabledData = vmodel._allEnabledData.concat();
-                        } else {
-                            vmodel._enabledData = [];
-                        }
-                        if (avalon.type(onSelectAll) === 'function') {
-                            onSelectAll.call(vmodel, datas, val);
-                        }
-                        setTimeout(function () {
-                            vmodel._allSelected = val;
-                        }, 100);
-                    };
-                    vm._toggleColumn = function (toggle, index) {
-                        if (!containerWrapper)
-                            return toggle;
-                        var rows = containerWrapper.children, column = null;
-                        for (var i = 0, row, len = rows.length; i < len; i++) {
-                            row = rows[i];
-                            if (!avalon(row).hasClass('oni-smartgrid-row')) {
-                                continue;
-                            }
-                            column = row.children[index];
-                            if (column) {
-                                if (toggle) {
-                                    column.style.display = 'table-cell';
-                                } else {
-                                    column.style.display = 'none';
-                                }
-                            }
-                        }
-                        return toggle;
-                    };
-                    vm._setColumnWidth = function (resize) {
-                        var parentContainerWidth = avalon(vmodel.container.parentNode).width() - 2, columnsInfo = getMaxWidthColumn(vmodel.columns), showColumnWidth = columnsInfo.showColumnWidth, maxWidthColumn = columnsInfo.maxWidthColumn, maxWidth = maxWidthColumn.configWidth, adjustColumns = [maxWidthColumn], autoWidth = parentContainerWidth - showColumnWidth + maxWidth, rows = Array.prototype.slice.call(containerWrapper.children);
-                        if (!autoWidth) {
-                            return false;
-                        }
-                        setColumnWidth(adjustColumns, autoWidth);
-                        rows.forEach(function (row, index) {
-                            var columns = vmodel.columns.$model, rowColumns = row.children, columnsLen = columns.length;
-                            if (rowColumns.length < columnsLen) {
-                                return false;
-                            }
-                            for (var i = 0; i < columnsLen; i++) {
-                                rowColumns[i].style.width = columns[i].width + 'px';
-                            }
-                        });
-                    };
-                    vm._getTemplate = function (defineDatas, startIndex) {
-                        var fn, html, id = 'smartgrid_tmp_' + tempId, dt = defineDatas || vmodel.data, _columns = vmodel.columns, columns = _columns.$model, selectableType = vmodel.selectable && vmodel.selectable.type || '', datas = [];
-                        avalon.each(dt, function (i, item) {
-                            if (item.$id && item.$id != 'remove')
-                                datas.push(item);
-                        });
-                        var dataLen = datas.length, checkRow = selectableType === 'Checkbox';
-                        if (!EJS[id]) {
-                            fn = EJS.compile(options.template, vmodel.htmlHelper);
-                            EJS[id] = fn;
-                        } else {
-                            fn = EJS[id];
-                        }
-                        for (var i = 0, len = columns.length; i < len; i++) {
-                            var column = columns[i], name = column.key;
-                            if (!sorting) {
-                                //如果sortTrend属性不存在，在IE下直接给它赋值会报错
-                                _columns[i].sortTrend && (_columns[i].sortTrend = 'ndb');
-                            }
-                            for (var j = 0; j < dataLen; j++) {
-                                var data = datas[j];
-                                data[name] = data[name] !== void 0 ? data[name] : column.defaultValue;
-                            }
-                        }
-                        html = fn({
-                            data: datas,
-                            columns: _columns,
-                            len: 2,
-                            noResult: vmodel.noResult,
-                            vmId: vmId,
-                            startIndex: startIndex || 0,
-                            checkRow: checkRow
-                        });
-                        return html;
-                    };
-                    vm._getAllCheckboxDisabledStatus = function (allSelected) {
-                        var disabledCheckboxLen = vmodel._filterCheckboxData.length, disabledData = vmodel._disabledData.length, noneSelectedDataLen = disabledCheckboxLen + disabledData;
-                        if (allSelected) {
-                            return noneSelectedDataLen === vmodel.data.length ? true : false;
-                        } else {
-                            return false;
-                        }
-                    };
-                    /**
-             * @interface 增加行，已經渲染的不會再操作
-             * @param data {Array} 新增的行
-             * @param init {Boolean} 是否为初始化grid
-             * @param noShowLoading {Boolean} 渲染期间是否显示loading
-             */
-                    vm.addRows = function (data, init, noShowLoading) {
-                        // 防止 addRows([])带来问题
-                        if ((!data || !data.length) && !init)
-                            return;
-                        var tableTemplate = '', rows, container = vmodel.container, selectable = vmodel.selectable, len = vmodel.getLen(vmodel.data), arrLen = vmodel.data.length;
-                        if (!containerWrapper)
-                            return;
-                        if (len === 0 || init)
-                            avalon.clearHTML(containerWrapper);
-                        vmodel._pagerShow = !len ? false : true;
-                        // 做数据拷贝
-                        if (data) {
-                            var _data = [];
-                            avalon.each(data, function (i, item) {
-                                _data.push(avalon.mix({}, item));
-                                _data[i].$id = guid();
-                            });
-                            vmodel.data.push.apply(vmodel.data, _data);
-                        }
-                        avalon.each(vmodel.data, function (i, item) {
-                            item.$id = item.$id || guid();
-                        });
-                        tableTemplate = vmodel.addRow(vmodel._getTemplate(data ? vmodel.data.slice(arrLen) : data, data ? arrLen : 0), vmodel.columns.$model, vmodels);
-                        rows = avalon.parseHTML(tableTemplate);
-                        containerWrapper.appendChild(rows);
-                        if (selectable && (selectable.type === 'Checkbox' || selectable.type === 'Radio')) {
-                            var allSelected = isSelectAll(vmodel.data);
-                            vmodel._allSelected = allSelected;
-                            getSelectedData(vmodel);
-                        }
-                        if (!noShowLoading){
-                            vmodel.showLoading(vmodel.data);
-                        }
-                        avalon.nextTick(function () {
-                            avalon.scan(vmodel.container, [vmodel].concat(vmodels));
-                            if (!noShowLoading)
-                                vmodel.hideLoading();
-                        })
-                        if (sorting){
-                            sorting = false;
-                        }
-                    };
-                    vm.getLen = function (arr) {
-                        var cnt = 0;
-                        for (var i = 0, len = arr.length; i < len; i++) {
-                            if (arr[i] && arr[i].$id != 'remove')
-                                cnt++;
-                        }
-                        return cnt;
-                    };
-                    vm.removeRow = function (index, removeData) {
-                        var data = vmodel.data[index];
-                        if (!data)
-                            return;
-                        var id = data.$id, tr = document.getElementById(id);
-                        tr && tr.parentNode.removeChild(tr);
-                        if (removeData === false) {
-                            data.$id = 'remove';
-                        } else {
-                            vmodel.data.splice(index, 1);
-                        }
-                        if (!vmodel.getLen(vmodel.data))
-                            vmodel.render(void 0, true);
-                    };
-                    /**
-             * @interface {Function} 用新的数据重新渲染表格视图
-             * @param data {Array} 重新渲染表格的数据集合
-             * @param init {Boolean} 是否为初始化grid
-             * @param noShowLoading {Boolean} 渲染期间是否显示loading
-             */
-                    vm.render = function (data, init, noShowLoading) {
-                        if (avalon.type(data) === 'array') {
-                            vmodel.data = data;
-                        } else {
-                            init = data;
-                        }
-                        init = init === void 0 || init ? true : false;
-                        if (!$initRender) {
-                            dataFracte(vmodel);
-                            vmodel._dataRender = !vmodel._dataRender;
-                        } else {
-                            $initRender = false;
-                        }
-                        if (!vmodel.noHeader && init && vmodel.isAffix && !vmodel.maxGridWidth) {
-                            vmodel._gridWidth = avalon(gridEle).innerWidth();
-                        }
-                        vmodel.addRows(void 0, init, noShowLoading);
-                        if (avalon.type(data) === 'array' && data.length) {
-                            adjustColumnWidth(vmodel);
-                        }
-                        if (sorting) {
-                            sorting = false;
-                        } else if (!init) {
-                            vmodel.container.scrollIntoView();
-                        }
-                        // vm._adjustColWidth();
-                    };
-                    vm.$init = function () {
-                        var container = vmodel.container, gridFrame = '';
-                        gridFrame = gridHeader.replace('MS_OPTION_ID', vmodel.$id);
-                        container.innerHTML = gridFrame;
-                        dataFracte(vmodel);
-                        avalon.scan(container, [vmodel].concat(vmodels));
-                        gridEle = document.getElementById('oni-smartgrid');
-                        containerWrapper = document.getElementById('oni-smartgrid-body');
-                        vmodel.$headerElement = smartgridHeader = document.getElementById('oni-smartgrid-header');
-                        if (vmodel.maxGridWidth) {
-                            var gridMainEle = document.getElementById('oni-smartgrid-main');
-                            gridMainEle.style.width = vmodel.maxGridWidth + 'px';
-
-                            vmodel._position = 'relative';
-                            gridMainEle.parentNode.style.cssText = '*overflow-x: scroll;_overflow-x: scroll;';
-                        }
-
-                        gridEle.id = '';
-                        containerWrapper.id = '';
-                        smartgridHeader.id = '';
-                        document.getElementById('oni-smartgrid-main').id = '';
-
-                        if (!vmodel.bodyHeight) {
-                            containerWrapper.parentNode.style.cssText = '*overflow-y:hidden;_overflow-y:hidden;';
-                        } else {
-                            containerWrapper.parentNode.style.cssText = '*overflow-y:scroll;_overflow-y:scroll;height:' + vmodel.bodyHeight + 'px';
-                        }
-                        avalon.nextTick(function () {
-                            vmodel.render(true);
-                            bindEvents(vmodel, container);
-                        });
-                        if (vmodel.isAffix) {
-                            if (!callbacksNeedRemove.scrollCallback) {
-                                callbacksNeedRemove.scrollCallback = avalon(window).bind('scroll', function () {
-                                    var scrollTop = Math.max(document.body.scrollTop, document.documentElement.scrollTop), offsetTop = $element.offset().top, headerHeight = avalon(smartgridHeader).css('height'), top = scrollTop - offsetTop + vmodel.affixHeight, clientHeight = avalon(window).height(), tableHeight = $element.outerHeight(), _position = vmodel._position;
-                                    if (tableHeight > clientHeight && scrollTop > offsetTop + headerHeight && offsetTop + tableHeight > scrollTop) {
-                                        if (vmodel._position !== 'fixed') {
-                                            vmodel._headerTop = Math.floor(top);
-                                        }
-                                        if (!vmodel.$model._fixHeaderToggle) {
-                                            vmodel._fixHeaderToggle = true;
-                                        }
-                                    } else {
-                                        vmodel._headerTop = 0;
-                                        if (vmodel.$model._fixHeaderToggle) {
-                                            vmodel._fixHeaderToggle = false;
-                                        }
-                                    }
-                                });
-                            }
-                        }
-                        element.resizeTimeoutId = 0;
-                        if (vmodel.colHandlerContainer !== '') {
-                            addColHandlerTo(vmodel.colHandlerContainer, vmodel);
-                        }
-                        if (typeof options.onInit === 'function') {
-                            options.onInit.call(element, vmodel, options, vmodels);
-                        }
-                        setTimeout(function(){
-                            adjustColumnWidth(vmodel);
-                            setTimeout(function(){
-                                avalon(vmodel.widgetElement.children[0]).css({
-                                    opacity: 1
-                                })
-                            }, 100)
-                        }, 200)
-                        if (window.addEventListener) {
-                            window.addEventListener('resize', function () {
-                                adjustColumnWidth(vmodel);
-                            });
-                        } else {
-                            window.attachEvent('onresize', function () {
-                                adjustColumnWidth(vmodel);
-                            });
-                        }
-
-                        // show loading
-                        var loadingText = document.getElementById('oni-smartgrid-loading-text')
-
-                        avalon(loadingText).css({
-                            marginTop: - loadingText.offsetHeight / 2 + 'px',
-                            marginLeft: - loadingText.offsetWidth / 2 + 'px',
-                            opacity: 1
-                        })
-                        loadingText.id = '';
-                    };
-                    vm.$remove = function () {
-                        var container = vmodel.container;
-                        container.innerHTML = container.textContent = '';
-                        avalon(window).unbind('scroll', callbacksNeedRemove.scrollCallback);
-                    };
-                });
-            return vmodel;
-        };
-    widget.defaults = {
-        _uiName: 'smartgrid',
-        container: '',
-        //@config 设置组件的容器元素，可以是字符串,表示对应元素的id，也可以是元素对象
-        pageable: true,
-        //@config 表格是否需要分页，默认需要，false不需要
-        noHeader: false,
-        //@config 是否显示表格头部
-        noFooter: false,
-        //@config 是否显示表格底部
-        data: [],
-        //@config 表格数据
-        /* @config 表格列信息对象的集合
-         * <pre>[{
-    key: "name", <span>//列标志 </span>
-    name: "姓名", <span>//列名</span>
-    sortable: true, <span>//是否可对列排序</span>
-    isLock: true, <span>//是否锁死列，设为true会始终显示此列，无论配置如何</span>
-    align": "left", <span>//设置列的对齐方式，"left"|"center"|"right"默认为"center"</span>
-    defaultValue: "shirly", <span>//列的默认值，当数据中没有为此列设置值时显示此默认值</span>
-    customClass: "custom", <span>//设置此列单元格的自定义类</span>
-    toggle: false, <span>//是否显示此列，true显示false不显示</span>
-    width: 400, <span>//设置列宽，必须是Number</span>
-    localSort: function(a, b, f) { <span>//自定义列的本地排序规则</span>
-        return a[f].localeCompare(b[f]);
-    },
-    format: "upperCaseName" <span>//包装列数据的方法，此方法名对应到htmlHelper对象中的方法</span>
-}, ...]</pre>
-         */
-        columns: [],
-        colHandlerContainer: '',
-        //@config 为列显隐设置按钮指定一个容器，不配置该项则按钮不出现，可传DOM节点或id
-        allChecked: true,
-        //@config 当设置selectable之后，是否显示表头的全选框，默认显示，false不显示
-        htmlHelper: {},
-        //@config 包装数据的方法集合,可<a href="avalon.smartgrid.ex2.html">参见实例2</a>的使用
-        noResult: regional.noDataText,
-        //@config 数据为空时表格的提示信息
-        /**
-         * @config {Function} 远程排序操作的方法
-         * @param field {String} 待排序的列名
-         * @param sortTrend {String} 排序规则，"asc"为升序"desc"为降序
-         * @param vmodel {Object} smartgrid组件对应的Vmodel
-         */
-        remoteSort: avalon.noop,
-        isAffix: false,
-        //@config 表头在表格内容超过可视区高度时是否吸顶，true吸顶，false不吸顶，默认不吸顶
-        affixHeight: 0,
-        //@config 配置吸顶元素距离窗口顶部的高度
-        selectable: false,
-        //@config 为表格添加Checkbox或者Radio操作项，格式为<pre>{type: 'Checkbox', width: '25px'}</pre>
-        bodyHeight: 0,
-        //@config 设置loading缓冲的配置项，具体使用方法参见loading文档
-        loadingToggle: false,
-        loadingText: regional.loadingText + "...",
-
-        // TODO
-        // modal: true,
-        // modalBackground: '#fff',
-        // modalOpacity: '0.6',
-
-        pager: {},
-        //@config 设置pager的配置项，smartgrid组件默认会添加pager，也可以改变表格显示数目，默认可选10、20、50、100条数据，如果不希望显示此选项，可以设置canChangePageSize为false
-        //@config 是否进行远程排序，默认true，进行远程排序必须配置远程排序的方法：remoteSort
-        sortable: { remoteSort: true },
-        /**
-         * @config {Function} 为表格添加新行
-         * @param tmp {String} 表格的body模板
-         * @param columns {Array} 列信息数组
-         * @param vmodel {Object} smartgrid组件对应的Vmodel
-         * @returns {String} 用户定制后的模板
-         */
-        addRow: function (tmpl, columns, vmodel) {
-            return tmpl;
-        },
-        getTemplate: function (str, options) {
-            return str;
-        },
-        /**
-         * @config {Function} 排序回调
-         * @param sortType {String} 排序规则，"asc"为升序"desc"为降序
-         * @param field {String} 排序的列名
-         */
-        onColumnSort: avalon.noop,
-        /**
-         * @config {Function} 用户选中一行或者取消一行选中状态的回调
-         * @param rowData {Object} 被操作行的数据对象
-         * @param isSelected {Boolean} 行的选中状态，true选中状态，false非选中状态
-         * @param dataIndex {Number} 当前行数据在data中的索引
-         */
-        onRowSelect: avalon.noop,
-        /**
-         * @config {Function} 用户全选或全不选的回调
-         * @param datas {Array} 表格数据
-         * @param isSelectedAll {Boolean} 全选状态，true选中状态，false非选中状态
-         */
-        onSelectAll: avalon.noop,
-        bodyMinHeight: 'auto'
-    };
-    function adjustColumnWidth(vmodel) {
-        var columns = vmodel.columns,
-            containerWidth = avalon(vmodel.$headerElement).width(),
-            allColumnWidth = 0,
-            maxWidth = 0,
-            maxWidthColumn = null,
-            needResizeColumns = []
-
-        for (var i = 0; i < columns.length; i++) {
-            var column = columns[i];
-            if (column.width === 'auto' || column.auto === true) {
-                column.auto = true
-                needResizeColumns.push(column);
-            } else{
-                var calculateWidth = 0
-                if(typeof column.width === 'string' && column.width.indexOf('%') > -1 || column.percentage){
-                    column.percentage = column.percentage || column.width
-                    column.width = calculateWidth = containerWidth * parseFloat(column.percentage) / 100
-                } else {
-                    calculateWidth = column.width
-                }
-
-                if(column.toggle){
-                    allColumnWidth += calculateWidth
-
-                    if(calculateWidth > maxWidth){
-                        maxWidthColumn = column
-                    }
-                    maxWidth = Math.max(maxWidth, calculateWidth)
-                }
-            }
-        }
-
-        var scrollBarWidthBlank = 30,
-            autoWidth = Math.floor(containerWidth - allColumnWidth + maxWidth - scrollBarWidthBlank);
-        if (allColumnWidth > containerWidth && needResizeColumns.length === 0) {
-            needResizeColumns.push(maxWidthColumn);
-            setColumnWidth(needResizeColumns, autoWidth);
-        } else {
-            if (maxWidth) {
-                if (!needResizeColumns.length) {
-                    needResizeColumns.push(maxWidthColumn);
-                } else {
-                    autoWidth = containerWidth - allColumnWidth - scrollBarWidthBlank;
-                }
-            }
-            setColumnWidth(needResizeColumns, autoWidth);
-        }
-    }
-    function initContainer(options, element) {
-        var container = options.container;
-        if (container) {
-            if (typeof container == 'string') {
-                container = document.getElementById(container);
-            }
-            if (!container.nodeType || container.nodeType != 1 || !document.body.contains(container)) {
-                container = null;
-            }
-        }
-        container = container || element;
-        options.container = container;
-    }
-    function bindEvents(options, containerWrapper) {
-        if (!options.selectable) {
-            return;
-        }
-        var type = options.selectable.type;
-        if (type === 'Checkbox' || type === 'Radio') {
-            avalon.bind(containerWrapper, 'click', function (event) {
-                var target = event.target, $target = avalon(target), $row = avalon(target.parentNode.parentNode.parentNode), datas = options.data, onSelectAll = options.onSelectAll, enabledData = options._enabledData, disabledData = options._disabledData, dataIndex = $target.attr('data-index'), filterCheckboxData = options._filterCheckboxData;
-                if (!$target.attr('data-role') || dataIndex === null) {
-                    return;
-                }
-                if ($target.attr('data-role') === 'selected') {
-                    var rowData = datas[dataIndex], isSelected = target.checked;
-                    if (isSelected) {
-                        options.selectable.type === 'Checkbox' ? $row.addClass('oni-smartgrid-selected') : 0;
-                        if (options.selectable.type === 'Radio') {
-                            enabledData.splice(0, enabledData.length);
-                        }
-                        rowData.selected = true;
-                        avalon.Array.ensure(enabledData, rowData);
-                    } else {
-                        $row.removeClass('oni-smartgrid-selected');
-                        rowData.selected = false;
-                        avalon.Array.remove(enabledData, rowData);
-                    }
-                    if (avalon.type(options.onRowSelect) === 'function') {
-                        options.onRowSelect.call($row[0], rowData, isSelected, dataIndex);
-                    }
-                }
-                if (enabledData.length == datas.length - disabledData.length - filterCheckboxData.length) {
-                    options._allSelected = true;
-                } else {
-                    options._allSelected = false;
-                }
-            });
-        }
-    }
-    function dataFracte(vmodel) {
-        var data = vmodel.data, enabledData = vmodel._enabledData = [], disabledData = vmodel._disabledData = [], filterCheckboxData = vmodel._filterCheckboxData = [];
-        for (var i = 0, len = data.length, dataItem; i < len; i++) {
-            dataItem = data[i];
-            if (dataItem.disable) {
-                disabledData.push(dataItem);
-                continue;
-            }
-            if (dataItem.checkboxShow == false) {
-                filterCheckboxData.push(dataItem);
-                continue;
-            }
-            enabledData.push(dataItem);
-        }
-        vmodel._allEnabledData = enabledData.concat();
-    }
-    function getSelectedData(vmodel) {
-        var datas = vmodel.data, enabledData = vmodel._enabledData = [];
-        for (var i = 0, len = datas.length; i < len; i++) {
-            var data = datas[i], selected = data.selected;
-            if (selected && !data.disable) {
-                enabledData.push(data);
-            }
-        }
-    }
-    function getMaxWidthColumn(columns, vmodel) {
-        var maxWidth = 0, maxWidthColumn = null, showColumnWidth = 0, _columns = columns.$model || columns;
-        for (var i = 0, len = _columns.length; i < len; i++) {
-            var column = _columns[i], columnWidth = column.width;
-            if (column.toggle) {
-                columnWidth > maxWidth ? (maxWidth = columnWidth) && (maxWidthColumn = columns[i]) : 0;
-                showColumnWidth += columnWidth;
-            }
-        }
-        return {
-            maxWidthColumn: maxWidthColumn,
-            showColumnWidth: showColumnWidth
-        };
-    }
-    function isSelectAll(datas) {
-        var allSelected = true, len = datas.length, checkboxFilterAll = 0;
-        if (!len) {
-            return false;
-        }
-        for (var i = 0; i < len; i++) {
-            var data = datas[i];
-            if (data.selected === void 0) {
-                data.selected = false;
-            }
-            if (data.checkboxShow !== false && !data.selected && !data.disable) {
-                allSelected = false;
-            }
-            if (data.checkboxShow === false) {
-                checkboxFilterAll++;
-            }
-        }
-        if (checkboxFilterAll === len) {
-            allSelected = false;
-        }
-        return allSelected;
-    }
-    function perfectColumns(options, element, vmId) {
-        var columns = options.columns, selectColumn = {}, parentContainer = avalon(options.container.parentNode),
-            parentContainerWidth = parentContainer.width() - 2
-
-        options._parentContainer = parentContainer;
-        options._parentContainerWidth = parentContainerWidth;
-        for (var i = 0, len = columns.length; i < len; i++) {
-            var column = columns[i], format = column.format, htmlFunction = '', _columnWidth = column.width, columnWidth = ~~_columnWidth;
-            column.align = column.align || 'center';
-            column.auto = false;
-            column.percentage = null;
-            column.originalWidth = _columnWidth;
-            if (column.toggle === void 0 || column.isLock) {
-                column.toggle = true;
-            }
-            column.configWidth = columnWidth;
-            if (!columnWidth && _columnWidth) {
-                if (_columnWidth.indexOf('%')) {
-                    columnWidth = column.width
-                } else {
-                    columnWidth = 'auto';
-                }
-            }
-            if (_columnWidth === void 0) {
-                columnWidth = 'auto';
-            }
-            column.width = columnWidth;
-            column.customClass = column.customClass || '';
-            if (column.sortable) {
-                column.sortTrend = 'ndb';
-            }
-            // 防止某些情形下format被覆盖
-            if (avalon.isFunction(format))
-                return;
-            if (format && !options.htmlHelper[format]) {
-                options.htmlHelper[format] = function (vmId, field, index, cellValue, rowData) {
-                    avalon.log('\u65B9\u6CD5' + format + '\u672A\u5B9A\u4E49');
-                    if (typeof cellValue === 'string') {
-                        return avalon.filters.sanitize(cellValue);
-                    }
-                    return cellValue;
-                };
-            }
-            htmlFunction = options.htmlHelper[format];
-            if (!htmlFunction) {
-                htmlFunction = function (vmId, field, index, cellValue, rowData) {
-                    if (typeof cellValue === 'string') {
-                        return avalon.filters.sanitize(cellValue);
-                    }
-                    return cellValue;
-                };
-            }
-            column.format = htmlFunction;
-            // EJS模板对于helper的渲染是通过将helper中的方法分别作为compiler的参数存在的，为了在静态模板中可以使用fn()这种方式渲染数据，只好统一将渲染数据的方法保存在format中
-            ;
-        }
-        if (options.selectable) {
-            var type = options.selectable.type, selectFormat, allSelected = true, selectableWidth = options.selectable.width || 25;
-            if (typeof selectableWidth === 'string') {
-                if (selectableWidth.indexOf('%') !== -1) {
-                    selectableWidth = parseInt(selectableWidth, 10) / 100 * parentContainerWidth;
-                } else {
-                    selectableWidth = parseInt(selectableWidth, 10);
-                }
-            }
-            if (type === 'Checkbox' || type === 'Radio') {
-                selectFormat = function (vmId, field, index, selected, rowData, disable, allSelected) {
-                    if (allSelected && type === 'Radio')
-                        return;
-                    if (rowData.checkboxShow === false) {
-                        return '';
-                    }
-                    var disableStr = disable ? ' disabled ' : ' ms-disabled=\'_getAllCheckboxDisabledStatus(' + (allSelected ? true : false) + ', _dataRender)\' ';
-                    return '<input type=\'' + type.toLowerCase() + '\'' + disableStr + (selected ? 'checked=\'checked\'' : '') + ' name=\'selected\' ' + (allSelected ? ' ms-on-click=\'_selectAll\' ms-duplex-radio=\'_allSelected\'' : ' data-index=\'' + index + '\'') + ' data-role=\'selected\'/>';
-                };
-                options._allSelected = false;
-            }
-            selectColumn = {
-                key: 'selected',
-                name: selectFormat(options.$id, 'selected', -1, allSelected, [], null, true),
-                width: selectableWidth,
-                configWidth: selectableWidth,
-                originalWidth: options.selectable.width || 25,
-                sortable: false,
-                type: options.selectable.type,
-                format: selectFormat,
-                toggle: true,
-                align: 'center',
-                customClass: '',
-                auto: false,
-                percentage: null
-            };
-            columns.unshift(selectColumn);
-        }
-
-        options.columns = columns;
-    }
-    function setColumnWidth(columns, width) {
-        var column = null, len = columns.length, columnWidth = width / len;
-        for (var i = 0; i < len; i++) {
-            column = columns[i];
-            column.width = columnWidth - 1;
-        }
-    }
-
-    return avalon;
-
-    // 添加对列显示/隐藏的控制
-    function addColHandlerTo(container, sgVmodel) {
-        if (!container) {
-            return;
-        }
-        if (typeof container === 'string') {
-            container = document.getElementById(sgVmodel.colHandlerContainer);
-        }
-        var containerCtrlId = 'colHandler_' + Date.now();
-        container.setAttribute('ms-controller', containerCtrlId);
-        var handlerWrap = document.createElement('div'), handlerTpl = '';
-        handlerTpl += '<div class="oni-smartgrid-handler-toggle"';
-        handlerTpl += '     ms-class="oni-smartgrid-handler-toggle-active: handlerWindowVisible"';
-        handlerTpl += '     ms-click="toggleHandlerWindow()">';
-        handlerTpl += '</div>';
-        handlerTpl += '<div class="oni-smartgrid-handler" ms-visible="handlerWindowVisible">';
-        handlerTpl += '    <div class="oni-smartgrid-handler-mode">';
-        handlerTpl += '        <span class="oni-smartgrid-handler-mode-item"';
-        handlerTpl += '              ms-repeat="colHandlerModes"';
-        handlerTpl += '              ms-class="oni-smartgrid-handler-mode-active: colHandlerMode === $key"';
-        handlerTpl += '              ms-click="changeColHandlerMode($key)">';
-        handlerTpl += '            {{$val}}';
-        handlerTpl += '        </span>';
-        handlerTpl += '    </div>';
-        handlerTpl += '    <ul class="oni-smartgrid-handler-list">';
-        handlerTpl += '        <li class="oni-smartgrid-handler-list-item" ms-repeat="colHandlerData">';
-        handlerTpl += '            <label>';
-        handlerTpl += '                <input type="checkbox"';
-        handlerTpl += '                       ms-duplex-checked="el.toggle"';
-        handlerTpl += '                       ms-attr-disabled="el.isLock"/>';
-        handlerTpl += '                <span class="oni-smartgrid-handler-name">{{el.name}}</span>';
-        handlerTpl += '            </label>';
-        handlerTpl += '        </li>';
-        handlerTpl += '    </ul>';
-        handlerTpl += '    <div class=\"oni-smartgrid-handler-ope\">';
-        handlerTpl += '        <button ms-widget=\"button\" data-button-size=\"small\" data-button-color=\"success\" ';
-        handlerTpl += '              ms-click=\"confirmColHandler()\">' + regional.confirmText + '<\/button>';
-        handlerTpl += '        <button ms-widget=\"button\" data-button-size=\"small\" ms-click=\"cancelColHandler()\">' + regional.cancelText + '<\/span>';
-        handlerTpl += '    <\/div>';
-        handlerTpl += '</div>';
-        handlerWrap.innerHTML = handlerTpl;
-        container.appendChild(handlerWrap);
-        avalon.define(containerCtrlId, function (vm) {
-            // 列显隐窗口是否可见
-            vm.handlerWindowVisible = false;
-            vm.toggleHandlerWindow = function () {
-                vm.handlerWindowVisible = !vm.handlerWindowVisible;
-                if (vm.handlerWindowVisible) {
-                    vm.colHandlerMode = 'defaults';
-                    vm.changeColHandlerMode('defaults');
-                }
-            };
-            // 控制列显示/隐藏模式
-            vm.colHandlerModes = {
-                defaults: regional.optDefaultText,
-                all: regional.optAllText,
-                custom: regional.optCustomText
-            };
-            vm.colHandlerMode = 'defaults';
-            vm.changeColHandlerMode = function (mode) {
-                vm.colHandlerMode = mode;
-                // 根据显隐模式更新显隐数据
-                if (mode === 'defaults') {
-                    updateHandlerData(vm.defaultColHandlerData);
-                } else if (mode === 'all') {
-                    updateHandlerData();
-                } else {
-                    updateHandlerData(getColumnData());
-                }
-                function updateHandlerData(dataSource) {
-                    var colHandlerData = vm.colHandlerData;
-                    for (var i = 0, len = colHandlerData.length; i < len; i++) {
-                        if (typeof dataSource === 'object') {
-                            colHandlerData[i].toggle = dataSource[i].toggle;
-                        } else {
-                            colHandlerData[i].toggle = true;
-                        }
-                    }
-                }
-            };
-            // 维护列显隐数据
-            vm.defaultColHandlerData = avalon.mix(true, [], getColumnData());
-            vm.colHandlerData = avalon.mix(true, [], getColumnData());
-            /**
-             * 点击确定时，将列显隐数据应用到表格中
-             */
-            vm.confirmColHandler = function () {
-                var visibleColKeys = [], unVisibleColKeys = [], colHandlerData = vm.colHandlerData;
-                for (var i = 0, len = colHandlerData.length; i < len; i++) {
-                    if (colHandlerData[i].toggle) {
-                        visibleColKeys.push(colHandlerData[i].key);
-                    } else {
-                        unVisibleColKeys.push(colHandlerData[i].key);
-                    }
-                }
-                sgVmodel.setColumns(visibleColKeys, true);
-                sgVmodel.setColumns(unVisibleColKeys, false);
-                adjustColumnWidth(sgVmodel);
-                vm.handlerWindowVisible = false;
-            };
-            /**
-             * 点击取消，隐藏设置框
-             */
-            vm.cancelColHandler = function () {
-                vm.handlerWindowVisible = false;
-            };
-        });
-        setHandlerLayout();
-        /**
-         * 设置列显隐处理布局样式
-         */
-        function setHandlerLayout() {
-            avalon(handlerWrap).addClass('oni-smartgrid-handler-wrap');
-            // 控制小窗口往哪边出现
-            var offsetLeft = getOffsetLeft(handlerWrap), clientWidth = avalon.css(document.body, 'width');
-            if (offsetLeft > clientWidth / 2) {
-                avalon(handlerWrap).addClass('oni-smartgrid-handler-wrap-right');
-            }
-            function getOffsetLeft(ele) {
-                var left = 0;
-                do {
-                    left += ele.offsetLeft || 0;
-                    ele = ele.offsetParent;
-                } while (ele);
-                return left;
-            }
-        }
-        /**
-         * 获取当前表格中每列的显示/隐藏情况
-         */
-        function getColumnData() {
-            var columnsData = [], columns = sgVmodel.columns;
-            for (var i = 0, len = columns.length; i < len; i++) {
-                if (columns[i].key === 'selected' && columns[i].name.slice(1, 6) === 'input') {
-                    continue;
-                }
-                columnsData.push({
-                    key: columns[i].key,
-                    name: columns[i].name,
-                    toggle: columns[i].toggle,
-                    isLock: columns[i].isLock
-                });
-            }
-            return columnsData;
-        }
-        avalon.scan();
-    }
-})
-/**
- @links
- [除设置columns和data外都是默认配置的smartgrid](avalon.smartgrid.ex1.html)
- [通过htmlHelper配置数据包装函数集合，定义columns时设置要包装列的format为对应的包装函数](avalon.smartgrid.ex2.html)
- [演示表格吸顶效果，并且取消pager的显示](avalon.smartgrid.ex3.html)
- [表格排序操作](avalon.smartgrid.ex4.html)
- [自定义smartgrid各种事件回调](avalon.smartgrid.ex5.html)
- [供用户调用API](avalon.smartgrid.ex6.html)
- [配置addRow为表格添加新行](avalon.smartgrid.ex7.html)
- [通过data的disable属性禁用部分数据](avalon.smartgrid.ex8.html)
- [通过avalon.filters.sanitize(str)来防止xss攻击](avalon.smartgrid.ex9.html)
- [嵌套的表格](avalon.smartgrid.ex10.html)
- [grid会根据columns配置的width自主决定是否显示水平滚动条](avalon.smartgrid.ex11.html)
- [通过设置bodyHeight使得表格体可以垂直滚动](avalon.smartgrid.ex12.html)
- [自定义列的显示/隐藏](avalon.smartgrid.ex13.html)
- */
-
-/**
- * @other
- *  <p>下面附上实现相同展示效果的情况下，smartgrid与simplegrid的渲染情况对比</p>
- <div>
- <h2>smartgrid渲染10条表格数据</h2>
- <img src="smartgrid10.png" style="width:100%"/>
- <h2>simplegrid渲染10条表格数据</h2>
- <img src="simplegrid10.png" style="width:100%"/>
- <h2>smartgrid渲染200条表格数据</h2>
- <img src="smartgrid200.png" style="width:100%"/>
- <h2>simplegrid渲染200条表格数据</h2>
- <img src="simplegrid200.png"style="width:100%"/>
- </div>
- */
-;
-///用于设置路由
-
-require(["./mmRouter/mmState"], function() {
+// ///用于设置路由
+// require.config({
+//     baseUrl : "../../lib/avalon.oniui-master",
+//     paths: {
+//         "mmstate": "/mmRouter/mmState",
+//         "simplegrid": "/simplegrid/avalon.simplegrid",
+//         "mmRequest" : "/mmRequest/mmRequest"
+//     }
+// });
+//avalon.config({loader: false});
+require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simplegrid"], function() {
     avalon.define({       //这个一定要写再里面
         $id     :       'adminIndex'
     });
@@ -12515,9 +12853,9 @@ require(["./mmRouter/mmState"], function() {
         onExit : function () {
             avalon.router.go('admin.addSpendType');
         }
-    });
+    })
 //设置子路由添加类别，这里开始配置右下方主要内容部分
-    avalon.state('admin.addSpendType', {
+    avalon.state("admin.addSpendType", {
         url: 'addSpendType',
         controller : 'addSpendType',
         views : {
@@ -12552,7 +12890,7 @@ require(["./mmRouter/mmState"], function() {
                 templateUrl: '/tpl/seeAllSpend.html'
             }
         }
-    })
+    });
     //图表echarts
     avalon.state('admin.echarts', {
         url: 'admin/echarts',
@@ -12586,121 +12924,287 @@ require(["./mmRouter/mmState"], function() {
     });
     //go!!!!!!!!!
     avalon.scan();
-
-})
-//后台页面控制器
-var navCtrlVm = avalon.define({
-    $id : 'navCtrl',
-    navGroups : [{
-        navName: '添加类别', //显示的名称
-        urlName: 'addSpendType' //对应URL的名称
-    }, {
-        navName: '管理全部类别',
-        urlName: 'seeAllType'
-    }, {
-        navName: '添加消费支出',
-        urlName: 'addSpending'
-    }, {
-        navName: '管理全部消费',
-        urlName: 'seeAllSpend'
-    }, {
-        navName: '统计分析',
-        urlName: 'echarts'
-    }, {
-        navName: '添加管理员',
-        urlName: 'addAdmin'
-    }, {
-        navName: '更改密码',
-        urlName: 'manageAccount'
-    }],
-    active : 'active',
-    addActive : function (e) {
-        var all = document.getElementsByClassName('nav-sidebar')[0].children;
-        var li = e.target;
-        for(var i = 0; i<all.length;i++){
-            avalon(all[i].children[0]).removeClass('active');
+    var navCtrlVm = avalon.define({
+        $id : 'navCtrl',
+        navGroups : [{
+            navName: '添加类别', //显示的名称
+            urlName: 'addSpendType' //对应URL的名称
+        }, {
+            navName: '管理全部类别',
+            urlName: 'seeAllType'
+        }, {
+            navName: '添加消费支出',
+            urlName: 'addSpending'
+        }, {
+            navName: '管理全部消费',
+            urlName: 'seeAllSpend'
+        }, {
+            navName: '统计分析',
+            urlName: 'echarts'
+        }, {
+            navName: '添加管理员',
+            urlName: 'addAdmin'
+        }, {
+            navName: '更改密码',
+            urlName: 'manageAccount'
+        }],
+        active : 'active',
+        addActive : function (e) {
+            var all = document.getElementsByClassName('nav-sidebar')[0].children;
+            var li = e.target;
+            for(var i = 0; i<all.length;i++){
+                avalon(all[i].children[0]).removeClass('active');
+            }
+            avalon(li).addClass('active');
+        },
+        initActive : function () {
+            var all = document.getElementsByClassName('nav-sidebar')[0].children;
+            avalon(all[0].children[0]).addClass('active');
+        },
+        rendered : function () {
+            navCtrlVm.initActive();
         }
-        avalon(li).addClass('active');
-    },
-    initActive : function () {
-        var all = document.getElementsByClassName('nav-sidebar')[0].children;
-        avalon(all[0].children[0]).addClass('active');
-    },
-    rendered : function () {
-        navCtrlVm.initActive();
-    }
-});
-
-//添加类别
-var addSpendTypeVm = avalon.define({
-    $id : "addSpendType",
-    typeName : '',
-    addType : function (e){
-        e.preventDefault();
-        if(addSpendTypeVm.typeName == ''){
-            return;
-        }
-        var formData = {
-            typeName: addSpendTypeVm.typeName
-        };
-        fetch('/addSpendType',{
-            method: 'POST',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(formData)
-        }).then(function successCallback(response) {
-            if (response.status === 200) {
-                addSpendTypeVm.typeName = "";
-                response.json().then(function(data) {
+    });
+    //添加类别
+    var addSpendTypeVm = avalon.define({
+        $id : "addSpendType",
+        typeName : '',
+        addType : function (e){
+            e.preventDefault();
+            if(addSpendTypeVm.typeName == ""){
+                return;
+            }
+            var formData = {
+                typeName: addSpendTypeVm.typeName
+            };
+            avalon.ajax({
+                url : '/addSpendType',
+                dataType : 'json',
+                type :'post',
+                contentType	: "application/json",
+                data : JSON.stringify(formData),
+                success :function (data) {
                     alert(data.success);
+                    addSpendTypeVm.typeName = "";
+                },
+                error :function () {
+                    alert('添加类别失败');
+                }
+            })
+        }
+    });
+    //查看所有类别
+    function getTypeData(url) {
+        avalon.ajax({
+            url : url,
+            dataType : 'json',
+            type :'get',
+            success :function (data) {
+                var seeAlltypeVm = avalon.define("seeAlltype", function (vm){
+                    vm.len = data.length;
+                    for(var i=0;i<data.length;i++){
+                        var j =i;
+                        data[i].number = ++j;
+                    }
+                    vm.$simplegridA = {
+                        columns : [
+                            {field: 'number', text:'序号',align:"center",width:"10%"},
+                            {field: "Sort_id", text: "ID", resizable: true, align: "center", width: "10%"},
+                            {field: "Sort_name", text: "类别名", resizable: true, align: "center", width: "10%"}
+                        ],
+                        data :data
+                    };
+                    vm.$skipArray = ["simplegrid"];
                 });
+            },
+            error :function () {
+                alert('获取数据失败');
             }
-        }, function errorCallback(response) {
-            alert("添加类别失败");
-        });
+        })
     }
+
+    //查看消费
+    function getSpendData(url) {
+        avalon.ajax({
+            url : url,
+            dataType : 'json',
+            type :'get',
+            success :function (data) {
+
+                var seeAllSpendVm = avalon.define("seeAllspend", function (vm){
+                    vm.num= data.length;
+                    for(var i=0;i<data.length;i++){
+                        var j =i;
+                        data[i].number = ++j;
+                        data[i].purchaserDate = new Date(data[i].purchaserDate).toLocaleDateString().replace(/\//g, '-');
+                    }
+                    vm.$simplegridB = {
+                        columns : [
+                            {field: 'number', text:'序号',align:"center",width:"10%"},
+                            {field: "id", text: "ID", resizable: true, align: "center", width: "10%"},
+                            {field: "purchaser", text: "购买者", resizable: true, align: "center", width: "10%"},
+                            {field: "Sort_name", text: "类别名", resizable: true, align: "center", width: "10%"},
+                            {field: "Price", text: "价格", resizable: true, align: "center", width: "10%"},
+                            {field: "purchaserPlace", text: "购买地点", resizable: true, align: "center", width: "10%"},
+                            {field: "purchaserDate", text: "购买日期", resizable: true, align: "center", width: "10%"},
+                            {field: "Current_num", text: "购买数量", resizable: true, align: "center", width: "10%"},
+                            {field: "Brief", text: "简介", resizable: true, align: "center", width: "10%"}
+                        ],
+                        data :data
+                    };
+                    vm.$skipArray = ["simplegrid"];
+                });
+            },
+            error :function () {
+                alert('获取数据失败');
+            }
+        })
+    }
+    getTypeData('/seeAlltype');//异步的时候表格无法初始化，同步也不行
+    getSpendData('/seeAllSpend');
+
+    //添加消费
+    var addSpendVm = avalon.define({
+        $id : "addSpend",
+        typeArr : [],
+        formData : {
+            purchaser: '',
+            typeId: '', //类别
+            price: '',
+            purchaserPlace: '',
+            purchaserDate: '',
+            currentNum: '',
+            brief: ''
+        },
+        gettypeArr :function () {
+            avalon.ajax({
+                url : '/seeAlltype',
+                dataType : 'json',
+                type :'get',
+                success :function (data) {
+                    addSpendVm.typeArr = data;
+                }
+            })
+        },
+        addspend : function (e) {
+            e.preventDefault();
+            addSpendVm.formData = {
+                purchaser: addSpendVm.formData.purchaser,
+                typeId: addSpendVm.formData.typeId, //类别
+                price: addSpendVm.formData.price,
+                purchaserPlace: addSpendVm.formData.purchaserPlace,
+                purchaserDate: addSpendVm.formData.purchaserDate,
+                currentNum: addSpendVm.formData.currentNum,
+                brief: addSpendVm.formData.brief
+            };
+            avalon.ajax({
+                url : '/addSpending',
+                dataType : 'json',
+                type :'post',
+                contentType	: "application/json",
+                data : JSON.stringify(addSpendVm.formData),
+                success :function (data) {
+                    alert(data.success);
+                    for(key in addSpendVm.formData){
+                        addSpendVm.formData[key]='';
+                    }
+                },
+                error :function () {
+                    alert('添加类别失败');
+                }
+            })
+        }
+    });
+    addSpendVm.gettypeArr();
+
+    //添加管理员
+    var addAdmin = avalon.define({
+        $id : 'addAdmin',
+        formData : { //属性使用时须先定义，不然拿不到值。（angular有当前作用域，不用定义可直接使用。）
+            uName: '',
+            psw: '',
+            pswAgain :''
+        },
+        addAdmin : function (e) {
+            e.preventDefault();
+            if (addAdmin.formData.psw !== addAdmin.formData.pswAgain) {
+                alert("两次密码输入不一致");
+                return;
+            }
+            var form = {
+                username : addAdmin.formData.uName,
+                password : addAdmin.formData.psw
+
+            };
+            avalon.ajax({
+                url : '/addAdmin',
+                dataType : 'json',
+                type :'post',
+                contentType	: "application/json",
+                data : JSON.stringify(form),
+                success :function (data) {
+                    alert(data.success);
+                    for(key in addAdmin.formData){
+                        addAdmin.formData[key]='';
+                    }
+                },
+                error :function () {
+                    alert('添加用户失败');
+                }
+            })
+        }
+    });
+
+    //更改密码
+    var manageUser = avalon.define({
+        $id : 'manageUser',
+        formData : { //属性使用时须先定义，不然拿不到值。（angular有当前作用域，不用定义可直接使用。）
+            uName: '',
+            pswOld :'',
+            psw: '',
+            pswAgain :'',
+
+        },
+        manageAccount : function (e) {
+            e.preventDefault();
+            if (manageUser.formData.psw !== manageUser.formData.pswAgain) {
+                alert("两次密码输入不一致");
+                return;
+            }
+            var form = {
+                username : manageUser.formData.uName,
+                password : manageUser.formData.psw,
+                pswOld: manageUser.formData.pswOld
+
+            };
+            avalon.ajax({
+                url : '/manageAccount',
+                dataType : 'json',
+                type :'post',
+                contentType	: "application/json",
+                data : JSON.stringify(form),
+                success :function (data) {
+                    if(data.ret === 1000){
+                        alert("修改密码失败");
+                        return;
+                    }
+                    alert(data.success);
+                    for(key in manageUser.formData){
+                        manageUser.formData[key]='';
+                    }
+                },
+                error :function (data) {
+                    alert(JSON.parse(data.responseText).success);
+                }
+            })
+        }
+    });
+
 })
 
-//require表格simplegrid
-require(["./smartgrid/avalon.smartgrid"], function () {
-    function  getData(url) {
-        var data = null;
-        fetch(url,{
-            method: 'get',
-            headers: {
-                'Accept': 'application/json'
-            }
-        }).then(function successCallback(response) {
-            if (response.status === 200) {
-                addSpendTypeVm.typeName = "";
-                response.json().then(function(data) {
-                    data = data;
-                });
-            }
-        }, function errorCallback(response) {
-            alert("获取数据失败");
-        });
-        return data;
-    }
-
-    //查看所有类别
-    avalon.define("seeAlltype", function(vm){
-        vm.smartgrid = {
-            columns : [
-                {key: "Sort_id", name: "ID", sortable : true, align: "center", width: "10%"},
-                {key: "Sort_name", name: "类别名", sortable : true, align: "center", width: "10%"}
-            ],
-
-            data : getData('/seeAlltype')
-        }
-        vm.$skipArray = ["smartgrid"]
-    })
-    avalon.scan();
-});
+;
 define("admin", function(){});
 
 
 (function(c){var d=document,a='appendChild',i='styleSheet',s=d.createElement('style');s.type='text/css';d.getElementsByTagName('head')[0][a](s);s[i]?s[i].cssText=c:s[a](d.createTextNode(c));})
-('\n/*\n这是每个都组件都应该引用的部分\n*/\ndiv.oni-loading {\n  position: absolute; }\n\n.oni-loading {\n  position: absolute;\n  left: 50%;\n  top: 50%; }\n  .oni-loading-modal {\n    position: absolute;\n    height: 100%;\n    width: 100%;\n    top: 0;\n    left: 0;\n    background: #fff; }\n    .oni-loading-modal iframe {\n      position: absolute;\n      width: 100%;\n      height: 100%;\n      left: 0;\n      top: 0;\n      z-index: -1;\n      zoom: 1;\n      background: transparent;\n      border: none; }\n\n/*\nchameleon\nby 司徒正美 2014.6.28 拉萨开往西宁的火车上\n这里放置所有组件都共用的类名，它们根据compass构建\n\noinui的CSS规范\n\n不能出现大写,以连字符风格命名 \n表示状态的应该用ui-state-*命名 \n表示功能的应该用ui-helper-*命名\n表示布局的应用用ui-uiname-* 命名, 它的子元素应该全部包在 .oni-uiname这个根类下\n如 .oni-grid .oni-grid-tbody{ ... }\n如果某一个区域的背景要换肤,能用ui-widget-header或ui-widget-content就尽用\n其他细微之后的换肤,使用ui-state-*-?-color实现,或至少包在if(oniui-theme === xxx){}分支内\n\n\n样式规则的出现顺序\n1 display float position overflow表示布局的样式\n2 width height line-height 表示尺寸的样式\n3 margin border padding 表示盒子模型的样式\n4 cursor font-size vertical-align text-align user-select outline....装饰用的样式\n5 color background 表示换肤的样式(上面的bordrer-color outline-color也可以放到这里)\n\n\nCSSShrink 是一个压缩 CSS 的在线工具。压缩比真高！\n\nhttp://cssshrink.com/\n*/\n.oni-helper-hidden {\n  display: none; }\n\n.oni-helper-hidden-accessible {\n  border: 0;\n  clip: rect(0 0 0 0);\n  height: 1px;\n  margin: -1px;\n  overflow: hidden;\n  padding: 0;\n  position: absolute;\n  width: 1px; }\n\n.oni-helper-reset {\n  margin: 0;\n  padding: 0;\n  border: 0;\n  outline: 0;\n  line-height: 1.3;\n  text-decoration: none;\n  font-size: 100%;\n  list-style: none; }\n\n.oni-helper-noselect {\n  -webkit-touch-callout: none;\n  -webkit-user-select: none;\n  -moz-user-select: none;\n  user-select: none; }\n  .oni-helper-noselect img, .oni-helper-noselect a {\n    -webkit-user-drag: none;\n    pointer-events: none; }\n\n.oni-helper-clearfix {\n  *zoom: 1; }\n  .oni-helper-clearfix:after {\n    content: \"\\0020\";\n    display: block;\n    height: 0;\n    clear: both;\n    overflow: hidden;\n    visibility: hidden; }\n\nhtml .oni-helper-max-index, body .oni-helper-max-index {\n  z-index: 1000; }\n\n@font-face {\n  font-family: fontawesome;\n  font-style: normal;\n  font-weight: normal;\n  src: url(\"http://source.qunarzz.com/fonts/oniui/0.0.3/oniui-webfont.eot?v=4.2.0\");\n  src: url(\"http://source.qunarzz.com/fonts/oniui/0.0.3/oniui-webfont.eot?#iefix&v=4.2.0\") format(\"embedded-opentype\"), \n       url(\"http://source.qunarzz.com/fonts/oniui/0.0.3/oniui-webfont.woff?v=4.2.0\") format(\"woff\"), \n       url(\"http://source.qunarzz.com/fonts/oniui/0.0.3/oniui-webfont.ttf?v=4.2.0\") format(\"truetype\"), \n       url(\"http://source.qunarzz.com/fonts/oniui/0.0.3/oniui-webfont.svg?v=4.2.0#fontawesomeregular\") format(\"svg\");}\n.oni-icon {\n  -webkit-touch-callout: none;\n  -webkit-user-select: none;\n  -moz-user-select: none;\n  user-select: none;\n  cursor: default;\n  font-family: fontawesome !important;\n  font-size: 14px;\n  -moz-osx-font-smoothing: grayscale;\n  -webkit-font-smoothing: antialiased;\n  font-style: normal;\n  font-weight: normal;\n  line-height: 18px;\n  vertical-align: middle; }\n\na .oni-icon, .oni-btn .oni-icon {\n  cursor: pointer; }\n\n.oni-state-error {\n  border: 1px solid #ff8888; }\n\n.oni-pager {\n  font: normal 12px/1.5 tahoma, arial, \'Hiragino Sans GB\', \'\\5b8b\\4f53\', sans-serif; }\n\n/*\n这是每个都组件都应该引用的部分\n*/\n.oni-pager {\n  display: -moz-inline-stack;\n  display: inline-block;\n  vertical-align: middle;\n  *vertical-align: auto;\n  zoom: 1;\n  *display: inline;\n  vertical-align: middle;\n  white-space: nowrap;\n  /*!省略掉的页数*/\n  /*!页面跳转部分的样式*/\n  /*!输入域的容器*/\n  /*!输入域*/\n  /*!里面的按钮的样式*/\n  /*!里面的文本全部包在一个容器内，以便实现居中*/ }\n  .oni-pager .oni-pager-items {\n    display: -moz-inline-stack;\n    display: inline-block;\n    vertical-align: middle;\n    *vertical-align: auto;\n    zoom: 1;\n    *display: inline;\n    vertical-align: middle; }\n  .oni-pager .oni-pager-prev, .oni-pager .oni-pager-next, .oni-pager .oni-pager-item {\n    display: -moz-inline-stack;\n    display: inline-block;\n    vertical-align: middle;\n    *vertical-align: auto;\n    zoom: 1;\n    *display: inline;\n    background-color: white;\n    color: #333;\n    height: 24px;\n    line-height: 24px;\n    margin-right: 5px;\n    border: 1px solid #d4d4d4;\n    padding: 0 10px;\n    -webkit-border-radius: 2px;\n    -moz-border-radius: 2px;\n    -ms-border-radius: 2px;\n    -o-border-radius: 2px;\n    border-radius: 2px;\n    cursor: pointer;\n    font-size: 12px;\n    vertical-align: middle;\n    -webkit-touch-callout: none;\n    -webkit-user-select: none;\n    -moz-user-select: none;\n    user-select: none;\n    /*!当前页,没有边框*/\n    /*!掠过*/\n    /*!禁用*/ }\n    .oni-pager .oni-pager-prev.oni-state-active, .oni-pager .oni-pager-next.oni-state-active, .oni-pager .oni-pager-item.oni-state-active {\n      color: #ff8888;\n      border: 0 none;\n      padding: 1px 11px;\n      cursor: default;\n      background: transparent; }\n    .oni-pager .oni-pager-prev.oni-state-hover, .oni-pager .oni-pager-next.oni-state-hover, .oni-pager .oni-pager-item.oni-state-hover {\n      border-color: #ff8888; }\n    .oni-pager .oni-pager-prev.oni-state-disabled, .oni-pager .oni-pager-next.oni-state-disabled, .oni-pager .oni-pager-item.oni-state-disabled {\n      border-color: #d9d9d9;\n      background-color: whitesmoke;\n      color: #999999;\n      cursor: default; }\n  .oni-pager .oni-pager-omit {\n    display: -moz-inline-stack;\n    display: inline-block;\n    vertical-align: middle;\n    *vertical-align: auto;\n    zoom: 1;\n    *display: inline;\n    height: 24px;\n    line-height: 24px;\n    margin-right: 5px;\n    padding: 1px 0;\n    vertical-align: middle;\n    font-size: 12px;\n    -webkit-touch-callout: none;\n    -webkit-user-select: none;\n    -moz-user-select: none;\n    user-select: none;\n    cursor: default; }\n  .oni-pager .oni-pager-jump {\n    display: -moz-inline-stack;\n    display: inline-block;\n    vertical-align: middle;\n    *vertical-align: auto;\n    zoom: 1;\n    *display: inline;\n    vertical-align: middle;\n    padding-left: 5px;\n    padding-right: 5px;\n    vertical-align: middle; }\n  .oni-pager .oni-pager-textbox-wrapper {\n    display: -moz-inline-stack;\n    display: inline-block;\n    vertical-align: middle;\n    *vertical-align: auto;\n    zoom: 1;\n    *display: inline;\n    width: 26px;\n    margin-left: 5px;\n    margin-right: 5px;\n    padding: 3px 5px;\n    vertical-align: middle;\n    font-size: 0;\n    outline: none;\n    background-color: white;\n    border: 1px solid #d4d4d4; }\n  .oni-pager .oni-pager-textbox {\n    display: inline;\n    float: left;\n    position: relative;\n    width: 26px;\n    height: 18px;\n    line-height: 18px;\n    padding: 0;\n    border: 0 none;\n    font-size: 12px;\n    outline: medium none;\n    vertical-align: middle;\n    text-align: center;\n    color: #333333;\n    background: #fff; }\n  .oni-pager .oni-pager-button {\n    display: -moz-inline-stack;\n    display: inline-block;\n    vertical-align: middle;\n    *vertical-align: auto;\n    zoom: 1;\n    *display: inline;\n    overflow: visible;\n    _overflow-y: hidden;\n    height: 26px;\n    margin-left: 5px;\n    border-radius: 2px;\n    outline: none;\n    cursor: pointer;\n    font-size: 12px;\n    vertical-align: middle;\n    padding: 0 10px;\n    text-decoration: none;\n    border: 1px solid #ccc;\n    background-color: #f8f8f8;\n    color: #333; }\n    .oni-pager .oni-pager-button:hover {\n      border-color: #bbb; }\n  .oni-pager .oni-pager-text {\n    display: -moz-inline-stack;\n    display: inline-block;\n    vertical-align: middle;\n    *vertical-align: auto;\n    zoom: 1;\n    *display: inline;\n    font-size: 12px;\n    vertical-align: middle; }\n/*\n这是每个都组件都应该引用的部分\n*/\n.oni-scrollbar {\n  position: absolute;\n  margin: 0;\n  padding: 0;\n  border: 0;\n  width: 10px;\n  height: 100%;\n  left: auto;\n  right: 0;\n  top: 0;\n  bottom: auto;\n  background: #f8f8f8;\n  z-index: 100;\n  -webkit-transition: opacity 0.5s;\n  -moz-transition: opacity 0.5s;\n  -ms-transition: opacity 0.5s;\n  -o-transition: opacity 0.5s;\n  transition: opacity 0.5s; }\n  .oni-scrollbar-arrow {\n    position: absolute;\n    background: #eee;\n    top: 0;\n    left: 0;\n    width: 10px;\n    height: 10px; }\n    .oni-scrollbar-state-hover {\n      background: #aaa; }\n    .oni-scrollbar-state-active {\n      background: #999; }\n    .oni-scrollbar-state-disabled {\n      background: #e9e9e9; }\n    .oni-scrollbar-arrow b {\n      width: 0;\n      height: 0;\n      line-height: 0;\n      font-size: 0;\n      border-top: 0 none;\n      border-right: 4px dashed transparent;\n      border-bottom: 4px solid #bcbcbc;\n      border-left: 4px dashed transparent;\n      position: absolute;\n      top: 50%;\n      left: 50%;\n      margin-top: -2px;\n      margin-left: -4px;\n      font-size: 0;\n      line-height: 0; }\n    .oni-scrollbar-arrow-down {\n      top: auto;\n      bottom: 0; }\n      .oni-scrollbar-arrow-down b {\n        width: 0;\n        height: 0;\n        line-height: 0;\n        font-size: 0;\n        border-top: 4px solid #bcbcbc;\n        border-right: 4px dashed transparent;\n        border-bottom: 0;\n        border-left: 4px dashed transparent; }\n  .oni-scrollbar-left .oni-scrollbar-state-active .oni-scrollbar-trangle-up, .oni-scrollbar-right .oni-scrollbar-state-active .oni-scrollbar-trangle-up {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 0 none;\n    border-right: 4px dashed transparent;\n    border-bottom: 4px solid #fff;\n    border-left: 4px dashed transparent; }\n  .oni-scrollbar-left .oni-scrollbar-state-active .oni-scrollbar-trangle-down, .oni-scrollbar-right .oni-scrollbar-state-active .oni-scrollbar-trangle-down {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 4px solid #fff;\n    border-right: 4px dashed transparent;\n    border-bottom: 0;\n    border-left: 4px dashed transparent; }\n  .oni-scrollbar-top .oni-scrollbar-state-active .oni-scrollbar-trangle-up, .oni-scrollbar-bottom .oni-scrollbar-state-active .oni-scrollbar-trangle-up {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 4px dashed transparent;\n    border-right: 4px solid #fff;\n    border-bottom: 4px dashed transparent;\n    border-left: 0; }\n  .oni-scrollbar-top .oni-scrollbar-state-active .oni-scrollbar-trangle-down, .oni-scrollbar-bottom .oni-scrollbar-state-active .oni-scrollbar-trangle-down {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 4px dashed transparent;\n    border-right: 0;\n    border-bottom: 4px dashed transparent;\n    border-left: 4px solid #fff; }\n  .oni-scrollbar-scroller {\n    overflow: hidden; }\n  .oni-scrollbar-left {\n    left: 0;\n    right: auto; }\n  .oni-scrollbar-top {\n    width: 100%;\n    height: 10px;\n    left: 0;\n    top: 0;\n    bottom: auto; }\n  .oni-scrollbar-bottom {\n    width: 100%;\n    height: 10px;\n    left: 0;\n    top: auto;\n    bottom: 0; }\n  .oni-scrollbar-draggerpar {\n    position: absolute;\n    left: 0;\n    top: 0;\n    width: 100%;\n    height: 100%; }\n    .oni-scrollbar-draggerpar .oni-scrollbar-dragger {\n      position: absolute;\n      width: 100%;\n      left: 0;\n      background: #ccc; }\n    .oni-scrollbar-draggerpar .oni-scrollbar-state-hover {\n      background: #999; }\n    .oni-scrollbar-draggerpar .oni-scrollbar-state-active {\n      background: #888; }\n    .oni-scrollbar-draggerpar .oni-scrollbar-state-disabled {\n      background: #e9e9e9; }\n  .oni-scrollbar-top .oni-scrollbar-ragger, .oni-scrollbar-bottom .oni-scrollbar-ragger {\n    height: 100%;\n    width: auto;\n    top: 0; }\n  .oni-scrollbar-top .oni-scrollbar-arrow b, .oni-scrollbar-bottom .oni-scrollbar-arrow b {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 4px dashed transparent;\n    border-right: 4px solid #bcbcbc;\n    border-bottom: 4px dashed transparent;\n    border-left: 0;\n    margin-top: -4px;\n    margin-left: -2px; }\n  .oni-scrollbar-top .oni-scrollbar-arrow-down, .oni-scrollbar-bottom .oni-scrollbar-arrow-down {\n    right: 0;\n    left: auto; }\n    .oni-scrollbar-top .oni-scrollbar-arrow-down b, .oni-scrollbar-bottom .oni-scrollbar-arrow-down b {\n      width: 0;\n      height: 0;\n      line-height: 0;\n      font-size: 0;\n      border-top: 4px dashed transparent;\n      border-right: 0;\n      border-bottom: 4px dashed transparent;\n      border-left: 4px solid #bcbcbc; }\n\n.oni-scrollbar-large {\n  width: 14px; }\n  .oni-scrollbar-large .oni-scrollbar-arrow {\n    width: 14px;\n    height: 14px; }\n  .oni-scrollbar-large .oni-scrollbar-top, .oni-scrollbar-large .oni-scrollbar-bottom {\n    height: 14px; }\n\n.oni-scrollbar-bottom-large {\n  height: 14px; }\n\n.oni-scrollbar-small {\n  width: 8px; }\n  .oni-scrollbar-small .oni-scrollbar-arrow {\n    width: 8px;\n    height: 8px; }\n\n.oni-scrollbar-bottom-small {\n  height: 8px; }\n\n.ui-scrollbar-scroller {\n  overflow: hidden; }\n@charset \"UTF-8\";\n.oni-dropdown {\n  font: normal 12px/1.5 tahoma, arial, \'Hiragino Sans GB\', \'\\5b8b\\4f53\', sans-serif; }\n\n/*\n这是每个都组件都应该引用的部分\n*/\n.oni-dropdown {\n  display: inline-block;\n  vertical-align: middle;\n  *display: inline;\n  *zoom: 1;\n  outline: none; }\n  .oni-dropdown .oni-dropdown-source {\n    border: 1px solid #ccc;\n    background-color: #fff;\n    cursor: pointer; }\n    .oni-dropdown .oni-dropdown-source .oni-dropdown-input {\n      display: inline-block;\n      vertical-align: middle;\n      *display: inline;\n      *zoom: 1;\n      white-space: nowrap;\n      overflow: hidden;\n      text-overflow: ellipsis;\n      overflow: hidden;\n      height: 18px;\n      padding: 3px 21px 3px 6px;\n      word-break: normal;\n      word-wrap: normal; }\n  .oni-dropdown .oni-icon {\n    cursor: pointer;\n    font-size: 12px;\n    vertical-align: baseline; }\n  .oni-dropdown .oni-dropdown-icon {\n    display: none;\n    color: #b5b5b5;\n    cursor: pointer;\n    padding: 0 6px;\n    position: absolute;\n    right: 0;\n    text-align: center;\n    top: -21px; }\n  .oni-dropdown .oni-dropdown-icon-wrap {\n    display: block;\n    position: relative;\n    height: 0; }\n    .oni-dropdown .oni-dropdown-icon-wrap .oni-icon-angle-down, .oni-dropdown .oni-dropdown-icon-wrap .oni-icon-angle-up {\n      display: block; }\n  .oni-dropdown .oni-dropdown-menu-inner {\n    -webkit-box-shadow: 2px 2px 3px 0 rgba(0, 0, 0, 0.1);\n    -moz-box-shadow: 2px 2px 3px 0 rgba(0, 0, 0, 0.1);\n    -ms-box-shadow: 2px 2px 3px 0 rgba(0, 0, 0, 0.1);\n    -o-box-shadow: 2px 2px 3px 0 rgba(0, 0, 0, 0.1);\n    box-shadow: 2px 2px 3px 0 rgba(0, 0, 0, 0.1);\n    background-color: #fff;\n    border: 1px solid #d4d4d4;\n    overflow-y: scroll;\n    padding: 3px 0; }\n    .oni-dropdown .oni-dropdown-menu-inner .oni-dropdown-state-disabled {\n      border-color: #D9D9D9;\n      background-color: #F5F5F5;\n      color: #999; }\n    .oni-dropdown .oni-dropdown-menu-inner .oni-dropdown-state-hover {\n      border-color: #f8f8f8;\n      background-color: #f8f8f8;\n      color: #000; }\n    .oni-dropdown .oni-dropdown-menu-inner .oni-dropdown-state-active {\n      border-color: #3775c0;\n      background-color: #3775c0;\n      color: #fff; }\n      .oni-dropdown .oni-dropdown-menu-inner .oni-dropdown-state-active .oni-icon {\n        color: #fff; }\n  .oni-dropdown .oni-dropdown-item {\n    white-space: nowrap;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    -webkit-touch-callout: none;\n    -webkit-user-select: none;\n    -moz-user-select: none;\n    user-select: none;\n    *zoom: 1;\n    width: 100%;\n    padding: 3px 0;\n    height: 24px;\n    line-height: 24px;\n    text-indent: 20px;\n    cursor: pointer;\n    word-break: normal;\n    word-wrap: normal; }\n    .oni-dropdown .oni-dropdown-item.oni-dropdown-group {\n      font-size: 14px;\n      font-weight: bold;\n      text-indent: 10px; }\n    .oni-dropdown .oni-dropdown-item.oni-dropdown-divider {\n      border-top: 1px solid #f2f2f2; }\n\n.oni-dropdown-menu {\n  display: none;\n  left: 0;\n  position: absolute;\n  top: -1px;\n  width: 100%;\n  _width: auto !important;\n  z-index: 1001; }\n\n.oni-dropdown-state-hover .oni-dropdown-source {\n  border-color: #999; }\n\n.oni-dropdown-state-focus .oni-dropdown-source {\n  border-color: #3775c0; }\n\n.oni-dropdown-state-disabled .oni-dropdown-source {\n  background-color: #F5F5F5;\n  border-color: #D9D9D9;\n  color: #ccc;\n  cursor: default; }\n.oni-dropdown-state-disabled .oni-dropdown-icon {\n  cursor: default; }\n\n.oni-state-small .oni-dropdown-source {\n  border-radius: 2px; }\n.oni-state-small .oni-dropdown-input {\n  padding-top: 1px;\n  padding-bottom: 1px; }\n.oni-state-small .oni-dropdown-icon {\n  top: -19px; }\n\n.oni-dropdown-state-error .oni-dropdown-source, .oni-dropdown-state-error:hover .oni-dropdown-source {\n  border-color: #ff8888; }\n@charset \"UTF-8\";\n/*\n这是每个都组件都应该引用的部分\n*/\nbutton.oni-button, input.oni-button {\n  height: 26px; }\n  button.oni-button .oni-icon, button.oni-button .oni-button-text, input.oni-button .oni-icon, input.oni-button .oni-button-text {\n    *margin-top: -2px; }\n\n.oni-button {\n  display: inline-block;\n  vertical-align: middle;\n  *display: inline;\n  *zoom: 1;\n  *vertical-align: auto;\n  overflow: hidden;\n  _display: inline;\n  padding: 0 10px;\n  margin: 0;\n  font-size: 12px;\n  border: 1px solid transparent;\n  text-align: center;\n  cursor: pointer;\n  color: #333;\n  text-decoration: none;\n  outline: 0;\n  height: 24px; }\n  .oni-button:link {\n    text-decoration: none; }\n  .oni-button.oni-state-default {\n    border-color: #ccc;\n    background-color: #f8f8f8; }\n  .oni-button:hover {\n    background-color: #f5f5f5;\n    border-color: #d9d9d9; }\n  .oni-button.oni-state-active, .oni-button:active {\n    background-color: #e6e6e6;\n    background-color: #d9d9d9 \\9;\n    background-image: none;\n    outline: 0;\n    -webkit-box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);\n    -moz-box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);\n    -ms-box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);\n    -o-box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);\n    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15); }\n  .oni-button.oni-state-disabled, .oni-button[disabled] {\n    background-color: #f8f8f8;\n    border-color: #d9d9d9;\n    color: #cccccc; }\n  .oni-button.oni-button-primary {\n    background-color: #3775c0;\n    border-color: #1d5eac;\n    color: #ffffff; }\n    .oni-button.oni-button-primary:hover {\n      background-color: #3d8be9;\n      border-color: #1a5092; }\n    .oni-button.oni-button-primary.oni-state-disabled {\n      background-color: #428bca;\n      color: #357ebd;\n      color: #ffffff;\n      opacity: 0.6;\n      filter: alpha(opacity=60); }\n  .oni-button.oni-button-warning {\n    background-color: #f0ad4e;\n    border-color: #eea236;\n    color: #ffffff; }\n    .oni-button.oni-button-warning:hover {\n      background-color: #ec971f;\n      border-color: #d58512; }\n    .oni-button.oni-button-warning.oni-state-disabled {\n      background-color: #f0ad4e;\n      border-color: #eea236;\n      color: #ffffff;\n      opacity: 0.6;\n      filter: alpha(opacity=60); }\n  .oni-button.oni-button-danger {\n    background-color: #d9534f;\n    border-color: #d43f3a;\n    color: #ffffff; }\n    .oni-button.oni-button-danger:hover {\n      background-color: #c9302c;\n      border-color: #ac2925; }\n    .oni-button.oni-button-danger.oni-state-disabled {\n      background-color: #d9534f;\n      border-color: #d43f3a;\n      color: #ffffff;\n      opacity: 0.6;\n      filter: alpha(opacity=60); }\n  .oni-button.oni-button-success {\n    background-color: #58b359;\n    border-color: #45a846;\n    color: #ffffff; }\n    .oni-button.oni-button-success:hover {\n      background-color: #68c969;\n      border-color: #3e973e; }\n    .oni-button.oni-button-success.oni-state-disabled {\n      background-color: #5cb85c;\n      border-color: #4cae4c;\n      color: #ffffff;\n      opacity: 0.6;\n      filter: alpha(opacity=60); }\n  .oni-button.oni-button-info {\n    background-color: #5bc0de;\n    border-color: #46b8da;\n    color: #ffffff; }\n    .oni-button.oni-button-info:hover {\n      background-color: #31b0d5;\n      border-color: #269abc; }\n    .oni-button.oni-button-info.oni-state-disabled {\n      background-color: #5bc0de;\n      border-color: #46b8da;\n      color: #ffffff;\n      opacity: 0.6;\n      filter: alpha(opacity=60); }\n  .oni-button.oni-button-inverse {\n    background-color: #333;\n    border-color: #222;\n    color: #ffffff; }\n    .oni-button.oni-button-inverse:hover {\n      background-color: #222;\n      border-color: #000; }\n    .oni-button.oni-button-inverse.oni-state-disabled {\n      background-color: #333;\n      border-color: #222;\n      opacity: 0.6;\n      filter: alpha(opacity=60); }\n  .oni-button.oni-corner-all {\n    -webkit-border-radius: 2px;\n    -moz-border-radius: 2px;\n    -ms-border-radius: 2px;\n    -o-border-radius: 2px;\n    border-radius: 2px; }\n  .oni-button.oni-corner-left {\n    -moz-border-radius-topleft: 2px;\n    -webkit-border-top-left-radius: 2px;\n    border-top-left-radius: 2px;\n    -moz-border-radius-bottomleft: 2px;\n    -webkit-border-bottom-left-radius: 2px;\n    border-bottom-left-radius: 2px; }\n  .oni-button.oni-corner-right {\n    -moz-border-radius-topright: 2px;\n    -webkit-border-top-right-radius: 2px;\n    border-top-right-radius: 2px;\n    -moz-border-radius-bottomright: 2px;\n    -webkit-border-bottom-right-radius: 2px;\n    border-bottom-right-radius: 2px; }\n  .oni-button.oni-corner-top {\n    -moz-border-radius-topleft: 2px;\n    -webkit-border-top-left-radius: 2px;\n    border-top-left-radius: 2px;\n    -moz-border-radius-topright: 2px;\n    -webkit-border-top-right-radius: 2px;\n    border-top-right-radius: 2px; }\n  .oni-button.oni-corner-bottom {\n    -moz-border-radius-bottomleft: 2px;\n    -webkit-border-bottom-left-radius: 2px;\n    border-bottom-left-radius: 2px;\n    -moz-border-radius-bottomright: 2px;\n    -webkit-border-bottom-right-radius: 2px;\n    border-bottom-right-radius: 2px; }\n  .oni-button .oni-icon {\n    font-size: 12px;\n    overflow: hidden;\n    line-height: 24px;\n    height: 24px;\n    display: inline-block;\n    vertical-align: middle;\n    *display: inline;\n    *zoom: 1;\n    *vertical-align: auto;\n    _display: inline;\n    font-style: normal; }\n  .oni-button .oni-button-text {\n    font-size: 12px;\n    line-height: 24px;\n    height: 24px;\n    word-break: keep-all;\n    white-space: nowrap;\n    display: inline-block;\n    vertical-align: middle;\n    *display: inline;\n    *zoom: 1;\n    *vertical-align: auto;\n    _display: inline; }\n    .oni-button .oni-button-text.oni-button-text-left {\n      padding-right: 5px; }\n    .oni-button .oni-button-text.oni-button-text-right {\n      padding-left: 5px; }\n    .oni-button .oni-button-text.oni-button-text-middle {\n      padding-left: 5px;\n      padding-right: 5px; }\n    .oni-button .oni-button-text.oni-button-text-hidden {\n      display: none;\n      padding: 0; }\n\nbutton.oni-button-small, input.oni-button-small {\n  height: 22px; }\n\n.oni-button-small {\n  padding: 0 5px;\n  height: 20px; }\n  .oni-button-small .oni-icon {\n    font-size: 12px;\n    line-height: 20px;\n    height: 20px; }\n  .oni-button-small .oni-button-text {\n    font-size: 12px;\n    line-height: 20px;\n    height: 20px; }\n\nbutton.oni-button-big, input.oni-button-big {\n  height: 32px; }\n\n.oni-button-big {\n  font-size: 14px;\n  padding: 0 15px;\n  height: 30px; }\n  .oni-button-big .oni-icon {\n    font-size: 14px;\n    line-height: 30px;\n    height: 30px; }\n  .oni-button-big .oni-button-text {\n    font-size: 14px;\n    line-height: 30px;\n    height: 30px; }\n\nbutton.oni-button-large, input.oni-button-large {\n  height: 40px; }\n\n.oni-button-large {\n  padding: 0 25px;\n  height: 38px; }\n  .oni-button-large .oni-icon {\n    font-size: 14px;\n    line-height: 38px;\n    height: 38px; }\n  .oni-button-large .oni-button-text {\n    font-size: 14px;\n    line-height: 38px;\n    height: 38px; }\n\n.oni-buttonset {\n  font-size: 0;\n  display: inline-block;\n  vertical-align: middle;\n  *display: inline;\n  *zoom: 1;\n  *vertical-align: auto;\n  _display: inline; }\n  .oni-buttonset .oni-button {\n    margin: 0;\n    float: left;\n    border-left-width: 0; }\n  .oni-buttonset .oni-button-first {\n    border-left-width: 1px; }\n  .oni-buttonset .oni-icon {\n    *margin-top: 0; }\n  .oni-buttonset .oni-button-text {\n    *margin-top: 0; }\n\n.oni-buttonset-vertical {\n  _width: 100px; }\n  .oni-buttonset-vertical .oni-button {\n    display: block;\n    float: none;\n    border-left-width: 1px;\n    border-top-width: 0; }\n  .oni-buttonset-vertical .oni-button-first {\n    border-top-width: 1px; }\n@charset \"UTF-8\";\n/*\n这是每个都组件都应该引用的部分\n*/\n.oni-smartgrid {\n  font-size: 12px;\n  line-height: 20px;\n  position: relative;\n  opacity: 0;\n  /* IE 8 */\n  -ms-filter: \"progid:DXImageTransform.Microsoft.Alpha(Opacity=0)\";\n  /* IE 5-7 */\n  filter: alpha(opacity=0);\n  /*三种容器的规则*/\n  /*三种容器下三角形的共同点*/\n  /*上三角*/\n  /*下三角*/ }\n  .oni-smartgrid .oni-helper-asc, .oni-smartgrid .oni-helper-desc, .oni-smartgrid .oni-helper-ndb {\n    width: 12px;\n    height: 12px;\n    line-height: 1;\n    display: inline-block;\n    vertical-align: middle;\n    *display: inline;\n    *zoom: 1;\n    *vertical-align: auto;\n    position: relative;\n    cursor: pointer; }\n  .oni-smartgrid .oni-helper-asc span, .oni-smartgrid .oni-helper-desc span, .oni-smartgrid .oni-helper-ndb span {\n    position: absolute;\n    top: 0px;\n    left: 4px; }\n  .oni-smartgrid .oni-helper-ndb .oni-helper-sort-top, .oni-smartgrid .oni-helper-desc .oni-helper-sort-top {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 0 none;\n    border-right: 6px dashed transparent;\n    border-bottom: 6px solid #ccc;\n    border-left: 6px dashed transparent;\n    top: 0px;\n    left: 0px; }\n  .oni-smartgrid .oni-helper-asc .oni-helper-sort-top {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 0 none;\n    border-right: 6px dashed transparent;\n    border-bottom: 6px solid #000;\n    border-left: 6px dashed transparent;\n    top: 0px;\n    left: 0px; }\n  .oni-smartgrid .oni-helper-ndb .oni-helper-sort-bottom, .oni-smartgrid .oni-helper-asc .oni-helper-sort-bottom {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 6px solid #ccc;\n    border-right: 6px dashed transparent;\n    border-bottom: 0;\n    border-left: 6px dashed transparent;\n    top: 8px;\n    left: 0px; }\n  .oni-smartgrid .oni-helper-desc .oni-helper-sort-bottom {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 6px solid #000;\n    border-right: 6px dashed transparent;\n    border-bottom: 0;\n    border-left: 6px dashed transparent;\n    top: 8px;\n    left: 0px; }\n  .oni-smartgrid .oni-pager {\n    float: right; }\n  .oni-smartgrid input {\n    margin: 0; }\n\n.oni-smartgrid-hide {\n  display: none; }\n\n.oni-smartgrid-hover {\n  background-color: #e8f5fd; }\n\n.oni-smartgrid-selected {\n  background-color: #fff7e6; }\n\n.oni-smartgrid-disabled {\n  color: #ccc;\n  background: #fff; }\n\n.oni-smartgrid-hidden input {\n  visibility: hidden; }\n\n.oni-smartgrid-main-wrapper {\n  position: relative;\n  overflow-x: auto;\n  _width: 100%;\n  border: 1px solid #e5e5e5; }\n\n.oni-smartgrid-header {\n  background-color: #f8f8f8;\n  border-bottom: 1px solid #e5e5e5;\n  zoom: 1; }\n  .oni-smartgrid-header-fixed {\n    background-color: #f8f8f8;\n    border-top: 1px solid #e5e5e5;\n    border-bottom: 1px solid #e5e5e5;\n    z-index: 1; }\n\n.oni-smartgrid-body-wrapper {\n  overflow-y: auto;\n  zoom: 1; }\n  .oni-smartgrid-body-wrapper .oni-smartgrid-body {\n    background: #fff; }\n    .oni-smartgrid-body-wrapper .oni-smartgrid-body .oni-smartgrid-nodata {\n      padding: 23px 0;\n      text-align: center;\n      line-height: 15px; }\n\n.oni-smartgrid-footer {\n  background-color: #f8f8f8;\n  font-size: 0;\n  border: 1px solid #e5e5e5;\n  border-width: 0 1px; }\n  .oni-smartgrid-footer .oni-smartgrid-pager-wrapper {\n    width: 100%;\n    padding: 5px 0px;\n    overflow: hidden;\n    border: 1px solid #e5e5e5;\n    border-width: 0 0 1px; }\n\n.oni-smartgrid-row {\n  border-bottom: 1px solid #f3f3f3;\n  font-size: 0; }\n\n.oni-smartgrid-column {\n  font-size: 12px;\n  display: inline-block;\n  vertical-align: middle;\n  *display: inline;\n  *zoom: 1;\n  *vertical-align: auto;\n  overflow: hidden; }\n  .oni-smartgrid-column-cell {\n    padding: 7px 5px;\n    word-wrap: break-word;\n    word-break: normal; }\n\n.oni-smartgrid-pager-options {\n  float: left;\n  height: 26px;\n  line-height: 26px;\n  padding-left: 5px;\n  font-size: 12px; }\n  .oni-smartgrid-pager-options .oni-smartgrid-showinfo {\n    display: inline-block;\n    vertical-align: middle;\n    *display: inline;\n    *zoom: 1;\n    *vertical-align: auto; }\n  .oni-smartgrid-pager-options .oni-dropdown {\n    margin: 0 5px; }\n\n/*列设置*/\n.oni-smartgrid-handler-wrap {\n  display: inline-block;\n  vertical-align: middle;\n  *display: inline;\n  *zoom: 1;\n  *vertical-align: auto;\n  position: relative;\n  z-index: 1;\n  text-align: left;\n  font-size: 12px; }\n  .oni-smartgrid-handler-wrap-right .oni-smartgrid-handler {\n    left: auto;\n    right: 0; }\n  .oni-smartgrid-handler-wrap .oni-smartgrid-handler-toggle {\n    width: 24px;\n    height: 24px;\n    border: 1px #ccc solid;\n    border-radius: 2px;\n    cursor: pointer;\n    text-align: center;\n    line-height: 28px;\n    outline: none;\n    background: #f8f8f8 url(http://7xkm02.com1.z0.glb.clouddn.com/smartgridsetting.png) no-repeat center;\n    -webkit-touch-callout: none;\n    -webkit-user-select: none;\n    -moz-user-select: none;\n    user-select: none; }\n    .oni-smartgrid-handler-wrap .oni-smartgrid-handler-toggle-active {\n      border-color: #3775c0; }\n\n.oni-smartgrid-handler {\n  position: absolute;\n  top: 25px;\n  left: 0;\n  width: 290px;\n  background-color: #fff;\n  border: 1px solid #ccc; }\n  .oni-smartgrid-handler .oni-smartgrid-handler-mode {\n    padding: 9px 10px;\n    line-height: 14px;\n    border-bottom: 1px #f2f2f2 solid;\n    color: #0084bb; }\n    .oni-smartgrid-handler .oni-smartgrid-handler-mode .oni-smartgrid-handler-mode-item {\n      display: inline-block;\n      vertical-align: middle;\n      *display: inline;\n      *zoom: 1;\n      *vertical-align: auto;\n      margin: 0 10px 0 0;\n      cursor: pointer;\n      -webkit-touch-callout: none;\n      -webkit-user-select: none;\n      -moz-user-select: none;\n      user-select: none; }\n    .oni-smartgrid-handler .oni-smartgrid-handler-mode-active {\n      font-weight: bold; }\n  .oni-smartgrid-handler .oni-smartgrid-handler-list {\n    margin: 0;\n    padding: 9px 10px;\n    list-style: none;\n    overflow: hidden; }\n    .oni-smartgrid-handler .oni-smartgrid-handler-list .oni-smartgrid-handler-name {\n      display: inline-block;\n      vertical-align: middle;\n      *display: inline;\n      *zoom: 1;\n      *vertical-align: auto;\n      max-width: 110px;\n      overflow: hidden;\n      text-overflow: ellipsis;\n      white-space: nowrap; }\n    .oni-smartgrid-handler .oni-smartgrid-handler-list .checkbox {\n      display: inline-block;\n      vertical-align: middle;\n      *display: inline;\n      *zoom: 1;\n      *vertical-align: auto;\n      margin-left: 0;\n      cursor: pointer;\n      *vertical-align: -3px; }\n    .oni-smartgrid-handler .oni-smartgrid-handler-list-item {\n      float: left;\n      width: 135px;\n      height: 20px;\n      line-height: 20px; }\n      .oni-smartgrid-handler .oni-smartgrid-handler-list-item label {\n        display: inline-block;\n        vertical-align: middle;\n        *display: inline;\n        *zoom: 1;\n        *vertical-align: auto;\n        cursor: pointer; }\n  .oni-smartgrid-handler .oni-smartgrid-handler-ope {\n    padding: 4px 5px;\n    text-align: right;\n    background-color: #f8f8f8;\n    font-size: 0; }\n    .oni-smartgrid-handler .oni-smartgrid-handler-ope .oni-button {\n      margin-left: 5px; }\n\n.oni-smartgrid-handler-wrap-right .oni-smartgrid-handler {\n  left: auto;\n  right: 0; }\n');
+('\n/*\nchameleon\nby 司徒正美 2014.6.28 拉萨开往西宁的火车上\n这里放置所有组件都共用的类名，它们根据compass构建\n\noinui的CSS规范\n\n不能出现大写,以连字符风格命名 \n表示状态的应该用ui-state-*命名 \n表示功能的应该用ui-helper-*命名\n表示布局的应用用ui-uiname-* 命名, 它的子元素应该全部包在 .oni-uiname这个根类下\n如 .oni-grid .oni-grid-tbody{ ... }\n如果某一个区域的背景要换肤,能用ui-widget-header或ui-widget-content就尽用\n其他细微之后的换肤,使用ui-state-*-?-color实现,或至少包在if(oniui-theme === xxx){}分支内\n\n\n样式规则的出现顺序\n1 display float position overflow表示布局的样式\n2 width height line-height 表示尺寸的样式\n3 margin border padding 表示盒子模型的样式\n4 cursor font-size vertical-align text-align user-select outline....装饰用的样式\n5 color background 表示换肤的样式(上面的bordrer-color outline-color也可以放到这里)\n\n\nCSSShrink 是一个压缩 CSS 的在线工具。压缩比真高！\n\nhttp://cssshrink.com/\n*/\n.oni-helper-hidden {\n  display: none; }\n\n.oni-helper-hidden-accessible {\n  border: 0;\n  clip: rect(0 0 0 0);\n  height: 1px;\n  margin: -1px;\n  overflow: hidden;\n  padding: 0;\n  position: absolute;\n  width: 1px; }\n\n.oni-helper-reset {\n  margin: 0;\n  padding: 0;\n  border: 0;\n  outline: 0;\n  line-height: 1.3;\n  text-decoration: none;\n  font-size: 100%;\n  list-style: none; }\n\n.oni-helper-noselect {\n  -webkit-touch-callout: none;\n  -webkit-user-select: none;\n  -moz-user-select: none;\n  user-select: none; }\n  .oni-helper-noselect img, .oni-helper-noselect a {\n    -webkit-user-drag: none;\n    pointer-events: none; }\n\n.oni-helper-clearfix {\n  *zoom: 1; }\n  .oni-helper-clearfix:after {\n    content: \"\\0020\";\n    display: block;\n    height: 0;\n    clear: both;\n    overflow: hidden;\n    visibility: hidden; }\n\nhtml .oni-helper-max-index, body .oni-helper-max-index {\n  z-index: 1000; }\n\n@font-face {\n  font-family: fontawesome;\n  font-style: normal;\n  font-weight: normal;\n  src: url(\"http://source.qunarzz.com/fonts/oniui/0.0.3/oniui-webfont.eot?v=4.2.0\");\n  src: url(\"http://source.qunarzz.com/fonts/oniui/0.0.3/oniui-webfont.eot?#iefix&v=4.2.0\") format(\"embedded-opentype\"), \n       url(\"http://source.qunarzz.com/fonts/oniui/0.0.3/oniui-webfont.woff?v=4.2.0\") format(\"woff\"), \n       url(\"http://source.qunarzz.com/fonts/oniui/0.0.3/oniui-webfont.ttf?v=4.2.0\") format(\"truetype\"), \n       url(\"http://source.qunarzz.com/fonts/oniui/0.0.3/oniui-webfont.svg?v=4.2.0#fontawesomeregular\") format(\"svg\");}\n.oni-icon {\n  -webkit-touch-callout: none;\n  -webkit-user-select: none;\n  -moz-user-select: none;\n  user-select: none;\n  cursor: default;\n  font-family: fontawesome !important;\n  font-size: 14px;\n  -moz-osx-font-smoothing: grayscale;\n  -webkit-font-smoothing: antialiased;\n  font-style: normal;\n  font-weight: normal;\n  line-height: 18px;\n  vertical-align: middle; }\n\na .oni-icon, .oni-btn .oni-icon {\n  cursor: pointer; }\n\n.oni-state-error {\n  border: 1px solid #ff8888; }\n\n.oni-pager {\n  font: normal 12px/1.5 tahoma, arial, \'Hiragino Sans GB\', \'\\5b8b\\4f53\', sans-serif; }\n\n/*\n这是每个都组件都应该引用的部分\n*/\n.oni-pager {\n  display: -moz-inline-stack;\n  display: inline-block;\n  vertical-align: middle;\n  *vertical-align: auto;\n  zoom: 1;\n  *display: inline;\n  vertical-align: middle;\n  white-space: nowrap;\n  /*!省略掉的页数*/\n  /*!页面跳转部分的样式*/\n  /*!输入域的容器*/\n  /*!输入域*/\n  /*!里面的按钮的样式*/\n  /*!里面的文本全部包在一个容器内，以便实现居中*/ }\n  .oni-pager .oni-pager-items {\n    display: -moz-inline-stack;\n    display: inline-block;\n    vertical-align: middle;\n    *vertical-align: auto;\n    zoom: 1;\n    *display: inline;\n    vertical-align: middle; }\n  .oni-pager .oni-pager-prev, .oni-pager .oni-pager-next, .oni-pager .oni-pager-item {\n    display: -moz-inline-stack;\n    display: inline-block;\n    vertical-align: middle;\n    *vertical-align: auto;\n    zoom: 1;\n    *display: inline;\n    background-color: white;\n    color: #333;\n    height: 24px;\n    line-height: 24px;\n    margin-right: 5px;\n    border: 1px solid #d4d4d4;\n    padding: 0 10px;\n    -webkit-border-radius: 2px;\n    -moz-border-radius: 2px;\n    -ms-border-radius: 2px;\n    -o-border-radius: 2px;\n    border-radius: 2px;\n    cursor: pointer;\n    font-size: 12px;\n    vertical-align: middle;\n    -webkit-touch-callout: none;\n    -webkit-user-select: none;\n    -moz-user-select: none;\n    user-select: none;\n    /*!当前页,没有边框*/\n    /*!掠过*/\n    /*!禁用*/ }\n    .oni-pager .oni-pager-prev.oni-state-active, .oni-pager .oni-pager-next.oni-state-active, .oni-pager .oni-pager-item.oni-state-active {\n      color: #ff8888;\n      border: 0 none;\n      padding: 1px 11px;\n      cursor: default;\n      background: transparent; }\n    .oni-pager .oni-pager-prev.oni-state-hover, .oni-pager .oni-pager-next.oni-state-hover, .oni-pager .oni-pager-item.oni-state-hover {\n      border-color: #ff8888; }\n    .oni-pager .oni-pager-prev.oni-state-disabled, .oni-pager .oni-pager-next.oni-state-disabled, .oni-pager .oni-pager-item.oni-state-disabled {\n      border-color: #d9d9d9;\n      background-color: whitesmoke;\n      color: #999999;\n      cursor: default; }\n  .oni-pager .oni-pager-omit {\n    display: -moz-inline-stack;\n    display: inline-block;\n    vertical-align: middle;\n    *vertical-align: auto;\n    zoom: 1;\n    *display: inline;\n    height: 24px;\n    line-height: 24px;\n    margin-right: 5px;\n    padding: 1px 0;\n    vertical-align: middle;\n    font-size: 12px;\n    -webkit-touch-callout: none;\n    -webkit-user-select: none;\n    -moz-user-select: none;\n    user-select: none;\n    cursor: default; }\n  .oni-pager .oni-pager-jump {\n    display: -moz-inline-stack;\n    display: inline-block;\n    vertical-align: middle;\n    *vertical-align: auto;\n    zoom: 1;\n    *display: inline;\n    vertical-align: middle;\n    padding-left: 5px;\n    padding-right: 5px;\n    vertical-align: middle; }\n  .oni-pager .oni-pager-textbox-wrapper {\n    display: -moz-inline-stack;\n    display: inline-block;\n    vertical-align: middle;\n    *vertical-align: auto;\n    zoom: 1;\n    *display: inline;\n    width: 26px;\n    margin-left: 5px;\n    margin-right: 5px;\n    padding: 3px 5px;\n    vertical-align: middle;\n    font-size: 0;\n    outline: none;\n    background-color: white;\n    border: 1px solid #d4d4d4; }\n  .oni-pager .oni-pager-textbox {\n    display: inline;\n    float: left;\n    position: relative;\n    width: 26px;\n    height: 18px;\n    line-height: 18px;\n    padding: 0;\n    border: 0 none;\n    font-size: 12px;\n    outline: medium none;\n    vertical-align: middle;\n    text-align: center;\n    color: #333333;\n    background: #fff; }\n  .oni-pager .oni-pager-button {\n    display: -moz-inline-stack;\n    display: inline-block;\n    vertical-align: middle;\n    *vertical-align: auto;\n    zoom: 1;\n    *display: inline;\n    overflow: visible;\n    _overflow-y: hidden;\n    height: 26px;\n    margin-left: 5px;\n    border-radius: 2px;\n    outline: none;\n    cursor: pointer;\n    font-size: 12px;\n    vertical-align: middle;\n    padding: 0 10px;\n    text-decoration: none;\n    border: 1px solid #ccc;\n    background-color: #f8f8f8;\n    color: #333; }\n    .oni-pager .oni-pager-button:hover {\n      border-color: #bbb; }\n  .oni-pager .oni-pager-text {\n    display: -moz-inline-stack;\n    display: inline-block;\n    vertical-align: middle;\n    *vertical-align: auto;\n    zoom: 1;\n    *display: inline;\n    font-size: 12px;\n    vertical-align: middle; }\n/*\n这是每个都组件都应该引用的部分\n*/\n.oni-scrollbar {\n  position: absolute;\n  margin: 0;\n  padding: 0;\n  border: 0;\n  width: 10px;\n  height: 100%;\n  left: auto;\n  right: 0;\n  top: 0;\n  bottom: auto;\n  background: #f8f8f8;\n  z-index: 100;\n  -webkit-transition: opacity 0.5s;\n  -moz-transition: opacity 0.5s;\n  -ms-transition: opacity 0.5s;\n  -o-transition: opacity 0.5s;\n  transition: opacity 0.5s; }\n  .oni-scrollbar-arrow {\n    position: absolute;\n    background: #eee;\n    top: 0;\n    left: 0;\n    width: 10px;\n    height: 10px; }\n    .oni-scrollbar-state-hover {\n      background: #aaa; }\n    .oni-scrollbar-state-active {\n      background: #999; }\n    .oni-scrollbar-state-disabled {\n      background: #e9e9e9; }\n    .oni-scrollbar-arrow b {\n      width: 0;\n      height: 0;\n      line-height: 0;\n      font-size: 0;\n      border-top: 0 none;\n      border-right: 4px dashed transparent;\n      border-bottom: 4px solid #bcbcbc;\n      border-left: 4px dashed transparent;\n      position: absolute;\n      top: 50%;\n      left: 50%;\n      margin-top: -2px;\n      margin-left: -4px;\n      font-size: 0;\n      line-height: 0; }\n    .oni-scrollbar-arrow-down {\n      top: auto;\n      bottom: 0; }\n      .oni-scrollbar-arrow-down b {\n        width: 0;\n        height: 0;\n        line-height: 0;\n        font-size: 0;\n        border-top: 4px solid #bcbcbc;\n        border-right: 4px dashed transparent;\n        border-bottom: 0;\n        border-left: 4px dashed transparent; }\n  .oni-scrollbar-left .oni-scrollbar-state-active .oni-scrollbar-trangle-up, .oni-scrollbar-right .oni-scrollbar-state-active .oni-scrollbar-trangle-up {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 0 none;\n    border-right: 4px dashed transparent;\n    border-bottom: 4px solid #fff;\n    border-left: 4px dashed transparent; }\n  .oni-scrollbar-left .oni-scrollbar-state-active .oni-scrollbar-trangle-down, .oni-scrollbar-right .oni-scrollbar-state-active .oni-scrollbar-trangle-down {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 4px solid #fff;\n    border-right: 4px dashed transparent;\n    border-bottom: 0;\n    border-left: 4px dashed transparent; }\n  .oni-scrollbar-top .oni-scrollbar-state-active .oni-scrollbar-trangle-up, .oni-scrollbar-bottom .oni-scrollbar-state-active .oni-scrollbar-trangle-up {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 4px dashed transparent;\n    border-right: 4px solid #fff;\n    border-bottom: 4px dashed transparent;\n    border-left: 0; }\n  .oni-scrollbar-top .oni-scrollbar-state-active .oni-scrollbar-trangle-down, .oni-scrollbar-bottom .oni-scrollbar-state-active .oni-scrollbar-trangle-down {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 4px dashed transparent;\n    border-right: 0;\n    border-bottom: 4px dashed transparent;\n    border-left: 4px solid #fff; }\n  .oni-scrollbar-scroller {\n    overflow: hidden; }\n  .oni-scrollbar-left {\n    left: 0;\n    right: auto; }\n  .oni-scrollbar-top {\n    width: 100%;\n    height: 10px;\n    left: 0;\n    top: 0;\n    bottom: auto; }\n  .oni-scrollbar-bottom {\n    width: 100%;\n    height: 10px;\n    left: 0;\n    top: auto;\n    bottom: 0; }\n  .oni-scrollbar-draggerpar {\n    position: absolute;\n    left: 0;\n    top: 0;\n    width: 100%;\n    height: 100%; }\n    .oni-scrollbar-draggerpar .oni-scrollbar-dragger {\n      position: absolute;\n      width: 100%;\n      left: 0;\n      background: #ccc; }\n    .oni-scrollbar-draggerpar .oni-scrollbar-state-hover {\n      background: #999; }\n    .oni-scrollbar-draggerpar .oni-scrollbar-state-active {\n      background: #888; }\n    .oni-scrollbar-draggerpar .oni-scrollbar-state-disabled {\n      background: #e9e9e9; }\n  .oni-scrollbar-top .oni-scrollbar-ragger, .oni-scrollbar-bottom .oni-scrollbar-ragger {\n    height: 100%;\n    width: auto;\n    top: 0; }\n  .oni-scrollbar-top .oni-scrollbar-arrow b, .oni-scrollbar-bottom .oni-scrollbar-arrow b {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 4px dashed transparent;\n    border-right: 4px solid #bcbcbc;\n    border-bottom: 4px dashed transparent;\n    border-left: 0;\n    margin-top: -4px;\n    margin-left: -2px; }\n  .oni-scrollbar-top .oni-scrollbar-arrow-down, .oni-scrollbar-bottom .oni-scrollbar-arrow-down {\n    right: 0;\n    left: auto; }\n    .oni-scrollbar-top .oni-scrollbar-arrow-down b, .oni-scrollbar-bottom .oni-scrollbar-arrow-down b {\n      width: 0;\n      height: 0;\n      line-height: 0;\n      font-size: 0;\n      border-top: 4px dashed transparent;\n      border-right: 0;\n      border-bottom: 4px dashed transparent;\n      border-left: 4px solid #bcbcbc; }\n\n.oni-scrollbar-large {\n  width: 14px; }\n  .oni-scrollbar-large .oni-scrollbar-arrow {\n    width: 14px;\n    height: 14px; }\n  .oni-scrollbar-large .oni-scrollbar-top, .oni-scrollbar-large .oni-scrollbar-bottom {\n    height: 14px; }\n\n.oni-scrollbar-bottom-large {\n  height: 14px; }\n\n.oni-scrollbar-small {\n  width: 8px; }\n  .oni-scrollbar-small .oni-scrollbar-arrow {\n    width: 8px;\n    height: 8px; }\n\n.oni-scrollbar-bottom-small {\n  height: 8px; }\n\n.ui-scrollbar-scroller {\n  overflow: hidden; }\n@charset \"UTF-8\";\n.oni-dropdown {\n  font: normal 12px/1.5 tahoma, arial, \'Hiragino Sans GB\', \'\\5b8b\\4f53\', sans-serif; }\n\n/*\n这是每个都组件都应该引用的部分\n*/\n.oni-dropdown {\n  display: inline-block;\n  vertical-align: middle;\n  *display: inline;\n  *zoom: 1;\n  outline: none; }\n  .oni-dropdown .oni-dropdown-source {\n    border: 1px solid #ccc;\n    background-color: #fff;\n    cursor: pointer; }\n    .oni-dropdown .oni-dropdown-source .oni-dropdown-input {\n      display: inline-block;\n      vertical-align: middle;\n      *display: inline;\n      *zoom: 1;\n      white-space: nowrap;\n      overflow: hidden;\n      text-overflow: ellipsis;\n      overflow: hidden;\n      height: 18px;\n      padding: 3px 21px 3px 6px;\n      word-break: normal;\n      word-wrap: normal; }\n  .oni-dropdown .oni-icon {\n    cursor: pointer;\n    font-size: 12px;\n    vertical-align: baseline; }\n  .oni-dropdown .oni-dropdown-icon {\n    display: none;\n    color: #b5b5b5;\n    cursor: pointer;\n    padding: 0 6px;\n    position: absolute;\n    right: 0;\n    text-align: center;\n    top: -21px; }\n  .oni-dropdown .oni-dropdown-icon-wrap {\n    display: block;\n    position: relative;\n    height: 0; }\n    .oni-dropdown .oni-dropdown-icon-wrap .oni-icon-angle-down, .oni-dropdown .oni-dropdown-icon-wrap .oni-icon-angle-up {\n      display: block; }\n  .oni-dropdown .oni-dropdown-menu-inner {\n    -webkit-box-shadow: 2px 2px 3px 0 rgba(0, 0, 0, 0.1);\n    -moz-box-shadow: 2px 2px 3px 0 rgba(0, 0, 0, 0.1);\n    -ms-box-shadow: 2px 2px 3px 0 rgba(0, 0, 0, 0.1);\n    -o-box-shadow: 2px 2px 3px 0 rgba(0, 0, 0, 0.1);\n    box-shadow: 2px 2px 3px 0 rgba(0, 0, 0, 0.1);\n    background-color: #fff;\n    border: 1px solid #d4d4d4;\n    overflow-y: scroll;\n    padding: 3px 0; }\n    .oni-dropdown .oni-dropdown-menu-inner .oni-dropdown-state-disabled {\n      border-color: #D9D9D9;\n      background-color: #F5F5F5;\n      color: #999; }\n    .oni-dropdown .oni-dropdown-menu-inner .oni-dropdown-state-hover {\n      border-color: #f8f8f8;\n      background-color: #f8f8f8;\n      color: #000; }\n    .oni-dropdown .oni-dropdown-menu-inner .oni-dropdown-state-active {\n      border-color: #3775c0;\n      background-color: #3775c0;\n      color: #fff; }\n      .oni-dropdown .oni-dropdown-menu-inner .oni-dropdown-state-active .oni-icon {\n        color: #fff; }\n  .oni-dropdown .oni-dropdown-item {\n    white-space: nowrap;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    -webkit-touch-callout: none;\n    -webkit-user-select: none;\n    -moz-user-select: none;\n    user-select: none;\n    *zoom: 1;\n    width: 100%;\n    padding: 3px 0;\n    height: 24px;\n    line-height: 24px;\n    text-indent: 20px;\n    cursor: pointer;\n    word-break: normal;\n    word-wrap: normal; }\n    .oni-dropdown .oni-dropdown-item.oni-dropdown-group {\n      font-size: 14px;\n      font-weight: bold;\n      text-indent: 10px; }\n    .oni-dropdown .oni-dropdown-item.oni-dropdown-divider {\n      border-top: 1px solid #f2f2f2; }\n\n.oni-dropdown-menu {\n  display: none;\n  left: 0;\n  position: absolute;\n  top: -1px;\n  width: 100%;\n  _width: auto !important;\n  z-index: 1001; }\n\n.oni-dropdown-state-hover .oni-dropdown-source {\n  border-color: #999; }\n\n.oni-dropdown-state-focus .oni-dropdown-source {\n  border-color: #3775c0; }\n\n.oni-dropdown-state-disabled .oni-dropdown-source {\n  background-color: #F5F5F5;\n  border-color: #D9D9D9;\n  color: #ccc;\n  cursor: default; }\n.oni-dropdown-state-disabled .oni-dropdown-icon {\n  cursor: default; }\n\n.oni-state-small .oni-dropdown-source {\n  border-radius: 2px; }\n.oni-state-small .oni-dropdown-input {\n  padding-top: 1px;\n  padding-bottom: 1px; }\n.oni-state-small .oni-dropdown-icon {\n  top: -19px; }\n\n.oni-dropdown-state-error .oni-dropdown-source, .oni-dropdown-state-error:hover .oni-dropdown-source {\n  border-color: #ff8888; }\n\n/*\n这是每个都组件都应该引用的部分\n*/\ndiv.oni-loading {\n  position: absolute; }\n\n.oni-loading {\n  position: absolute;\n  left: 50%;\n  top: 50%; }\n  .oni-loading-modal {\n    position: absolute;\n    height: 100%;\n    width: 100%;\n    top: 0;\n    left: 0;\n    background: #fff; }\n    .oni-loading-modal iframe {\n      position: absolute;\n      width: 100%;\n      height: 100%;\n      left: 0;\n      top: 0;\n      z-index: -1;\n      zoom: 1;\n      background: transparent;\n      border: none; }\n\n.oni-simplegrid {\n  font: normal 12px/1.5 tahoma, arial, \'Hiragino Sans GB\', \'\\5b8b\\4f53\', sans-serif; }\n\n/*\n这是每个都组件都应该引用的部分\n*/\n.oni-simplegrid {\n  font: normal 12px/1.5 tahoma,arial,\'Hiragino Sans GB\',\'\\5b8b\\4f53\',sans-serif;\n  width: 100%;\n  border: 1px solid #d4d4d4;\n  position: relative;\n  /*三种容器的规则*/\n  /*三种容器下三角形的共同点*/\n  /*上三角*/\n  /*下三角*/ }\n  .oni-simplegrid .oni-simplegrid-scroll-wrapper {\n    width: 100%;\n    overflow: auto;\n    position: relative;\n    z-index: 0; }\n  .oni-simplegrid .oni-simplegrid-wrapper {\n    width: 100%;\n    position: absolute; }\n  .oni-simplegrid .oni-simplegrid-thead {\n    width: 100%;\n    -webkit-touch-callout: none;\n    -webkit-user-select: none;\n    -moz-user-select: none;\n    user-select: none;\n    border-collapse: collapse; }\n  .oni-simplegrid .oni-simplegrid-thead td, .oni-simplegrid .oni-simplegrid-thead th {\n    border: 0 none;\n    padding: 10px 5px;\n    background-color: #f8f8f8; }\n  .oni-simplegrid .oni-simplegrid-thead td, .oni-simplegrid .oni-simplegrid-thead th, .oni-simplegrid .oni-simplegrid-tbody td, .oni-simplegrid .oni-simplegrid-tbody th {\n    padding-left: 5px; }\n  .oni-simplegrid .oni-simplegrid-tbody {\n    width: 100%;\n    border: 1px solid #d4d4d4;\n    border-left: none;\n    border-right: none;\n    border-collapse: collapse; }\n  .oni-simplegrid .oni-simplegrid-tbody td, .oni-simplegrid .oni-simplegrid-tbody th {\n    border: 0 none;\n    padding: 7px 5px; }\n  .oni-simplegrid .oni-simplegrid-tbody td, .oni-simplegrid .oni-simplegrid-tbody th {\n    border-bottom: 1px solid #f3f3f3; }\n  .oni-simplegrid .oni-simplegrid-tbody .oni-state-hover td, .oni-simplegrid .oni-simplegrid-tbody .oni-state-hover th {\n    background-color: #e8f5fd; }\n  .oni-simplegrid .oni-simplegrid-tbody .oni-state-selected td, .oni-simplegrid .oni-simplegrid-tbody .oni-state-selected th {\n    background-color: #fff7e6; }\n  .oni-simplegrid .oni-simplegrid-scroll-marker {\n    width: 100%;\n    z-index: -1; }\n  .oni-simplegrid .oni-simplegrid-pager-wrapper {\n    width: 100%;\n    padding: 5px 0px;\n    overflow: hidden;\n    background-color: #f8f8f8;\n    border-top: 1px solid #d4d4d4; }\n  .oni-simplegrid .oni-simplegrid-pager-options {\n    float: left;\n    height: 26px;\n    line-height: 26px;\n    padding-left: 5px; }\n    .oni-simplegrid .oni-simplegrid-pager-options .oni-dropdown {\n      margin: 0 5px;\n      vertical-align: top; }\n  .oni-simplegrid .oni-helper-asc, .oni-simplegrid .oni-helper-desc, .oni-simplegrid .oni-helper-ndb {\n    width: 16px;\n    height: 16px;\n    line-height: 1;\n    vertical-align: middle;\n    display: -moz-inline-stack;\n    display: inline-block;\n    vertical-align: middle;\n    *vertical-align: auto;\n    zoom: 1;\n    *display: inline;\n    position: relative;\n    cursor: pointer; }\n  .oni-simplegrid .oni-helper-asc span, .oni-simplegrid .oni-helper-desc span, .oni-simplegrid .oni-helper-ndb span {\n    position: absolute;\n    top: 0px;\n    left: 4px; }\n  .oni-simplegrid .oni-helper-ndb .oni-helper-sort-top, .oni-simplegrid .oni-helper-desc .oni-helper-sort-top {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 0 none;\n    border-right: 6px dashed transparent;\n    border-bottom: 6px solid #cccccc;\n    border-left: 6px dashed transparent;\n    top: 0px; }\n  .oni-simplegrid .oni-helper-asc .oni-helper-sort-top {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 0 none;\n    border-right: 6px dashed transparent;\n    border-bottom: 6px solid black;\n    border-left: 6px dashed transparent;\n    top: 0px; }\n  .oni-simplegrid .oni-helper-ndb .oni-helper-sort-bottom, .oni-simplegrid .oni-helper-asc .oni-helper-sort-bottom {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 6px solid #cccccc;\n    border-right: 6px dashed transparent;\n    border-bottom: 0;\n    border-left: 6px dashed transparent;\n    top: 8px; }\n  .oni-simplegrid .oni-helper-desc .oni-helper-sort-bottom {\n    width: 0;\n    height: 0;\n    line-height: 0;\n    font-size: 0;\n    border-top: 6px solid black;\n    border-right: 6px dashed transparent;\n    border-bottom: 0;\n    border-left: 6px dashed transparent;\n    top: 8px; }\n  .oni-simplegrid .oni-pager {\n    display: inline;\n    float: right; }\n  .oni-simplegrid .oni-simplegrid-empty {\n    text-align: center; }\n');
