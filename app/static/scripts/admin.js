@@ -167,7 +167,34 @@ var navCtrlVm = avalon.define({
 
 
 require(['mmRequest'], function () {
-
+//添加类别
+    var addSpendTypeVm = avalon.define({
+        $id : "addSpendType",
+        typeName : '',
+        addType : function (e){
+            e.preventDefault();
+            if(addSpendTypeVm.typeName == ''){
+                return;
+            }
+            var formData = {
+                typeName: addSpendTypeVm.typeName
+            };
+            avalon.ajax({
+                url : '/addSpendType',
+                dataType : 'json',
+                type :'post',
+                contentType	: "application/json",
+                data : JSON.stringify(formData),
+                success :function (data) {
+                    alert(data.success);
+                    addSpendTypeVm.typeName = "";
+                },
+                error :function () {
+                    alert('添加类别失败');
+                }
+            })
+        }
+    });
     //查看所有类别
     require(["simplegrid"], function () {
         function getTypeData(url) {
@@ -198,20 +225,21 @@ require(['mmRequest'], function () {
                 }
             })
         }
-        getTypeData('/seeAlltype');//异步的时候表格无法初始化，同步也不行
 
-        //查看消费类别
+        //查看消费
         function getSpendData(url) {
             avalon.ajax({
                 url : url,
                 dataType : 'json',
                 type :'get',
                 success :function (data) {
+
                     var seeAllSpendVm = avalon.define("seeAllspend", function (vm){
-                        vm.total = data.length;
+                        vm.num= data.length;
                         for(var i=0;i<data.length;i++){
                             var j =i;
                             data[i].number = ++j;
+                            data[i].purchaserDate = new Date(data[i].purchaserDate).toLocaleDateString().replace(/\//g, '-');
                         }
                         vm.$simplegridB = {
                             columns : [
@@ -235,6 +263,8 @@ require(['mmRequest'], function () {
                 }
             })
         }
+
+        getTypeData('/seeAlltype');//异步的时候表格无法初始化，同步也不行
         getSpendData('/seeAllSpend');
     })
     //添加消费
@@ -291,35 +321,90 @@ require(['mmRequest'], function () {
     })
     addSpendVm.gettypeArr();
 
+    //添加管理员
+    var addAdmin = avalon.define({
+        $id : 'addAdmin',
+        formData : { //属性使用时须先定义，不然拿不到值。（angular有当前作用域，不用定义可直接使用。）
+            uName: '',
+            psw: '',
+            pswAgain :''
+        },
+        addAdmin : function (e) {
+            e.preventDefault();
+            if (addAdmin.formData.psw !== addAdmin.formData.pswAgain) {
+                alert("两次密码输入不一致");
+                return;
+            }
+            var form = {
+                username : addAdmin.formData.uName,
+                password : addAdmin.formData.psw
+
+            };
+            avalon.ajax({
+                url : '/addAdmin',
+                dataType : 'json',
+                type :'post',
+                contentType	: "application/json",
+                data : JSON.stringify(form),
+                success :function (data) {
+                    alert(data.success);
+                    for(key in addAdmin.formData){
+                        addAdmin.formData[key]='';
+                    }
+                },
+                error :function () {
+                    alert('添加用户失败');
+                }
+            })
+        }
+    })
+
+    //更改密码
+    var manageUser = avalon.define({
+        $id : 'manageUser',
+        formData : { //属性使用时须先定义，不然拿不到值。（angular有当前作用域，不用定义可直接使用。）
+            uName: '',
+            pswOld :'',
+            psw: '',
+            pswAgain :'',
+
+        },
+        manageAccount : function (e) {
+            e.preventDefault();
+            if (manageUser.formData.psw !== manageUser.formData.pswAgain) {
+                alert("两次密码输入不一致");
+                return;
+            }
+            var form = {
+                username : manageUser.formData.uName,
+                password : manageUser.formData.psw,
+                pswOld: manageUser.formData.pswOld
+
+            };
+            avalon.ajax({
+                url : '/manageAccount',
+                dataType : 'json',
+                type :'post',
+                contentType	: "application/json",
+                data : JSON.stringify(form),
+                success :function (data) {
+                    if(data.ret == 1000){
+                        alert("修改密码失败");
+                        return;
+                    }
+                    alert(data.success);
+                    for(key in manageUser.formData){
+                        manageUser.formData[key]='';
+                    }
+                },
+                error :function (data) {
+                    alert(JSON.parse(data.responseText).success);
+                }
+            })
+        }
+    })
     avalon.scan();
 
 })
-//添加类别
-var addSpendTypeVm = avalon.define({
-    $id : "addSpendType",
-    typeName : '',
-    addType : function (e){
-        e.preventDefault();
-        if(addSpendTypeVm.typeName == ''){
-            return;
-        }
-        var formData = {
-            typeName: addSpendTypeVm.typeName
-        };
-        avalon.ajax({
-            url : '/addSpendType',
-            dataType : 'json',
-            type :'post',
-            contentType	: "application/json",
-            data : JSON.stringify(formData),
-            success :function (data) {
-                alert(data.success);
-                addSpendTypeVm.typeName = "";
-            },
-            error :function () {
-                alert('添加类别失败');
-            }
-        })
-    }
-});
+
 

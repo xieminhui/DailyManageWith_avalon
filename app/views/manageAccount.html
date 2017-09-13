@@ -1,12 +1,12 @@
 <h1 class="page-header">更换密码</h1>
-<div class="row">
-    <form class="form-horizontal" role="form" name="adminForm" ng-submit="manageAccount(adminForm.$valid,$event)">
+<div class="row" ms-controller="manageUser">
+    <form class="form-horizontal" role="form" name="adminForm" ms-submit="manageAccount($event)">
         <div class="form-group">
             <label class="col-md-2 control-label">
                 账号：
             </label>
             <div class="col-md-5">
-                <input type="text" class="form-control" placeholder="请输入管理员账号……" ng-model="uName" id="uName" name="uName" required autofocus="">
+                <input type="text" class="form-control" placeholder="请输入管理员账号……" ms-duplex="formData.uName" id="uName" name="uName" required autofocus="">
             </div>
         </div>
         <div class="form-group">
@@ -14,7 +14,7 @@
                 旧的密码：
             </label>
             <div class="col-md-5">
-                <input type="password" class="form-control" placeholder="请输入旧密码……" ng-model="pswOld" id="pswOld" name="pswOld" required>
+                <input type="password" class="form-control" placeholder="请输入旧密码……" ms-duplex="formData.pswOld" id="pswOld" name="pswOld" required>
             </div>
         </div>
         <div class="form-group">
@@ -22,7 +22,7 @@
                 新的密码：
             </label>
             <div class="col-md-5">
-                <input type="password" class="form-control" placeholder="请输入密码……" ng-model="psw" id="psw" name="psw" required>
+                <input type="password" class="form-control" placeholder="请输入密码……" ms-duplex="formData.psw" id="psw" name="psw" required>
             </div>
         </div>
         <div class="form-group">
@@ -30,7 +30,7 @@
                 确认密码：
             </label>
             <div class="col-md-5">
-                <input type="password" class="form-control" placeholder="请再输入密码……" ng-model="pswAgain" id="pswAgain" name="pswAgain" required>
+                <input type="password" class="form-control" placeholder="请再输入密码……" ms-duplex="formData.pswAgain" id="pswAgain" name="pswAgain" required>
             </div>
         </div>
         <div class="form-group">

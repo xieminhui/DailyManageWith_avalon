@@ -166,8 +166,9 @@ exports.manageAccount = function(req, res) {
             //修改密码
             UserDao.modify(obj, function(msg, err) {
                 if (err) {
-                    res.status(403).json({
-                        success: '账号或密码错误'
+                    res.status(200).json({
+                        ret : 1000,
+                        success: '修改失败'
                     });
                 }
                 res.status(200).json({
@@ -178,7 +179,7 @@ exports.manageAccount = function(req, res) {
 
         } else {
             res.status(403).json({
-                success: '找不到用户'
+                success: '用户名或密码不正确'
             });
         }
     });

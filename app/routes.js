@@ -126,7 +126,7 @@ module.exports = function(app) {
         AdminCtrl.addAdmin(req, res);
     });
 
-    //添加管理员
+    //修改密码
     app.post('/manageAccount', function(req, res) {
         AdminCtrl.manageAccount(req, res);
     });
