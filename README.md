@@ -33,11 +33,11 @@ app
 	├──Model.js	Java的理解是实体类，不过项目很多都是直接传对象的，没用到，不过数据定义在这个文件，方便理解和查看
 ├──static 静态文件，包含JS和CSS文件，可以用Grunt或者Gulp压缩混淆
 	├──scripts
-		├──admin.js 后台管理模块的controller部分，打包前的原始文件
+		├──admin.js 后台管理模块的controller部分，打包前的原始文件，打包需要放在lib下的avalon.oniui-master目录下，和组件一起打包
 		├──adminbuild.js 后台管理打包文件，用r.js打包后的主文件
-		├──adminconfig.js 打包文件，打包需要放在lib下的avalon.oniui-master目录下，和组件一起打包
-		├──avalonRouter.js 路由配置，丢弃不使用
-		├──avalonVm.js 路由配置，丢弃不使用
+		├──adminconfig.js 打包配置文件，打包需要放在lib下的avalon.oniui-master目录下，和组件一起打包
+		├──avalonRouter.js 路由配置，合并后不使用
+		├──avalonVm.js 路由配置，合并后不使用
 		├──index.js 登录页面打包文件
 		├──indexconfig.js 登陆模块的打包文件配置
 		├──login.js 登陆模块的js，打包前原始文件
