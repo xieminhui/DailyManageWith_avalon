@@ -47,6 +47,7 @@
   "dependencies": {
     "avalon2": "^2.2.9",
     "bluebird": "^3.5.0",
+    "echarts": "^3.7.1",
     "fetch-polyfill2": "0.0.3",
     "json3": "^3.3.2",
     "mmstate": "^1.0.2",

@@ -1,9 +1,14 @@
 require.config({
-    baseUrl : "../../lib/avalon.oniui-master",
+    baseUrl : "../../lib",
     paths: {
-        "mmstate": "/mmRouter/mmState",
-        "simplegrid": "/simplegrid/avalon.simplegrid",
-        "mmRequest" : "/mmRequest/mmRequest"
+        "mmstate": "/avalon.oniui-master/mmRouter/mmState",
+        "simplegrid": "/avalon.oniui-master/simplegrid/avalon.simplegrid",
+        "mmRequest" : "/avalon.oniui-master/mmRequest/mmRequest"
+    },
+    shim : {
+        'echarts' : {
+            exports: 'echarts'
+        }
     }
 });
 require(["mmstate","mmRequest","simplegrid"], function() {
@@ -23,6 +28,34 @@ require(["mmstate","mmRequest","simplegrid"], function() {
         onLoad : function (fromstate, tostate) {
             if(tostate.stateName == 'admin'){//这个很烦，如果不主动切换过去，登录进去后右边页面不会自动跳到第一个选项“添加类别”
                 avalon.router.go('admin.addSpendType');
+            }
+            if(tostate.stateName == 'admin.echarts'){
+                require(['echarts'],function (ec) {
+                    var myChart = ec.init(document.getElementById('main'));
+
+                    // 指定图表的配置项和数据
+                    var option = {
+                        title: {
+                            text: 'ECharts 入门示例'
+                        },
+                        tooltip: {},
+                        legend: {
+                            data:['销量']
+                        },
+                        xAxis: {
+                            data: ["衬衫","羊毛衫","雪纺衫","裤子","高跟鞋","袜子"]
+                        },
+                        yAxis: {},
+                        series: [{
+                            name: '销量',
+                            type: 'bar',
+                            data: [5, 20, 36, 10, 10, 20]
+                        }]
+                    };
+
+                    // 使用刚指定的配置项和数据显示图表。
+                    myChart.setOption(option);
+                })
             }
         }
     });
@@ -108,6 +141,7 @@ require(["mmstate","mmRequest","simplegrid"], function() {
         },
         onEnter : function () {
             avalon.vmodels['navCtrl'].currentIndex = 4;
+
         }
     })
     //添加管理员
@@ -418,6 +452,5 @@ require(["mmstate","mmRequest","simplegrid"], function() {
             })
         }
     });
-
 })
 
