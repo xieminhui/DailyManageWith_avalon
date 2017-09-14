@@ -2,14 +2,7 @@ var connection = require('../db/connection');
 var queryWithArgs = connection.queryWithArgs;
 var query = connection.query;
 
-/*
-             输入       	输出
-insert       BookType       信息
-delete       BookType.id    信息
-modify       BookType       信息
-selectAll    无         	[BookType]     
-selectOne    BookType.id    BookType
- */
+
 
 var insert = function(bookType, callback) {
     console.log("bookType:"+bookType);
