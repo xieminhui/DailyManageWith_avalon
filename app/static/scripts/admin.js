@@ -57,6 +57,9 @@ require(["mmstate","mmRequest","simplegrid"], function() {
             '' : {
                 templateUrl: '/tpl/addSpendType.html'
             }
+        },
+        onEnter : function () {
+            avalon.vmodels['navCtrl'].currentIndex = 0;
         }
     })
     //设置子路由查看全部类别
@@ -66,6 +69,9 @@ require(["mmstate","mmRequest","simplegrid"], function() {
             '' : {
                 templateUrl: '/tpl/seeAllType.html'
             }
+        },
+        onEnter : function () {
+            avalon.vmodels['navCtrl'].currentIndex = 1;
         }
     })
     //添加消费支出
@@ -75,6 +81,9 @@ require(["mmstate","mmRequest","simplegrid"], function() {
             '' : {
                 templateUrl: '/tpl/addSpending.html'
             }
+        },
+        onEnter : function () {
+            avalon.vmodels['navCtrl'].currentIndex = 2;
         }
     })
     //查看所有消费
@@ -84,6 +93,9 @@ require(["mmstate","mmRequest","simplegrid"], function() {
             '' : {
                 templateUrl: '/tpl/seeAllSpend.html'
             }
+        },
+        onEnter : function () {
+            avalon.vmodels['navCtrl'].currentIndex = 3;
         }
     });
     //图表echarts
@@ -93,6 +105,9 @@ require(["mmstate","mmRequest","simplegrid"], function() {
             '' : {
                 templateUrl: '/tpl/echarts.html'
             }
+        },
+        onEnter : function () {
+            avalon.vmodels['navCtrl'].currentIndex = 4;
         }
     })
     //添加管理员
@@ -102,6 +117,9 @@ require(["mmstate","mmRequest","simplegrid"], function() {
             '' : {
                 templateUrl: '/tpl/addAdmin.html'
             }
+        },
+        onEnter : function () {
+            avalon.vmodels['navCtrl'].currentIndex = 5;
         }
     })
     //添加管理员
@@ -111,6 +129,9 @@ require(["mmstate","mmRequest","simplegrid"], function() {
             '' : {
                 templateUrl: '/tpl/manageAccount.html'
             }
+        },
+        onEnter : function () {
+            avalon.vmodels['navCtrl'].currentIndex = 6;
         }
     })
     //启动路由
@@ -158,6 +179,10 @@ require(["mmstate","mmRequest","simplegrid"], function() {
         },
         rendered : function () {
             navCtrlVm.initActive();
+        },
+        currentIndex : 0,
+        isActive : function(j){
+            navCtrlVm.currentIndex=j;
         }
     });
     //添加类别

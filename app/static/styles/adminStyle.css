@@ -96,15 +96,16 @@
     margin-top:4px;
     margin-left:5px;
 }
-.active{
-    color: #FFFFFF;
-    background-color: #337A7B;
-}
+
 .nav > li > a:hover {
     text-decoration: none;
     background-color: #eee;
 }
-.nav > li > a:focus {
+.nav > li > a:focus,.nav > li > a:active {
     background-color: #337A7B;
     color : #ffffff;
+}
+.active{
+    color: #FFFFFF !important;
+    background-color: #337A7B !important;
 }
