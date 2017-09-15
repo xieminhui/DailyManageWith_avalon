@@ -3,7 +3,8 @@ require.config({
     paths: {
         "mmstate": "/avalon.oniui-master/mmRouter/mmState",
         "simplegrid": "/avalon.oniui-master/simplegrid/avalon.simplegrid",
-        "mmRequest" : "/avalon.oniui-master/mmRequest/mmRequest"
+        "mmRequest" : "/avalon.oniui-master/mmRequest/mmRequest",
+        "datepicker" :'/avalon.oniui-master/datepicker/avalon.datepicker'
     },
     shim : {
         'echarts' : {
@@ -11,7 +12,8 @@ require.config({
         }
     }
 });
-require(["mmstate","mmRequest","simplegrid"], function() {
+
+require(["mmstate","mmRequest","simplegrid","datepicker"], function() {
     avalon.define({       //这个一定要写再里面
         $id     :       'adminIndex'
     });
@@ -30,32 +32,9 @@ require(["mmstate","mmRequest","simplegrid"], function() {
                 avalon.router.go('admin.addSpendType');
             }
             if(tostate.stateName == 'admin.echarts'){
-                require(['echarts'],function (ec) {
-                    var myChart = ec.init(document.getElementById('main'));
-
-                    // 指定图表的配置项和数据
-                    var option = {
-                        title: {
-                            text: 'ECharts 入门示例'
-                        },
-                        tooltip: {},
-                        legend: {
-                            data:['销量']
-                        },
-                        xAxis: {
-                            data: ["衬衫","羊毛衫","雪纺衫","裤子","高跟鞋","袜子"]
-                        },
-                        yAxis: {},
-                        series: [{
-                            name: '销量',
-                            type: 'bar',
-                            data: [5, 20, 36, 10, 10, 20]
-                        }]
-                    };
-
-                    // 使用刚指定的配置项和数据显示图表。
-                    myChart.setOption(option);
-                })
+                // require(['echarts'],function (ec) {
+                //   //  echartsVm.getEchartsData(ec);
+                // })
             }
         }
     });
@@ -326,7 +305,7 @@ require(["mmstate","mmRequest","simplegrid"], function() {
             typeId: '', //类别
             price: '',
             purchaserPlace: '',
-            purchaserDate: '',
+            purchaserDate: new Date().toLocaleDateString().replace(/\//g, '-'),
             currentNum: '',
             brief: ''
         },
@@ -342,7 +321,7 @@ require(["mmstate","mmRequest","simplegrid"], function() {
         },
         addspend : function (e) {
             e.preventDefault();
-            addSpendVm.formData = {
+            var formData = {
                 purchaser: addSpendVm.formData.purchaser,
                 typeId: addSpendVm.formData.typeId, //类别
                 price: addSpendVm.formData.price,
@@ -356,7 +335,7 @@ require(["mmstate","mmRequest","simplegrid"], function() {
                 dataType : 'json',
                 type :'post',
                 contentType	: "application/json",
-                data : JSON.stringify(addSpendVm.formData),
+                data : JSON.stringify(formData),
                 success :function (data) {
                     alert(data.success);
                     for(key in addSpendVm.formData){
@@ -370,6 +349,147 @@ require(["mmstate","mmRequest","simplegrid"], function() {
         }
     });
     addSpendVm.gettypeArr();
+
+    //echarts
+    var echartsVm = avalon.define({
+        $id : "echart",
+        formData : {
+            startTime : new Date().toLocaleDateString().replace(/\//g, '-'),
+            endTime : new Date().toLocaleDateString().replace(/\//g, '-')
+        },
+        main : null,
+        pie : null,
+        getEchartsData : function () {
+            require(['echarts'],function (echarts) {
+                var formData = {
+                    startTime : echartsVm.formData.startTime,
+                    endTime : echartsVm.formData.endTime
+                };
+                avalon.ajax({
+                    url : '/echartsData',
+                    type : 'post',
+                    dataType : 'json',
+                    contentType : 'application/json',
+                    data : JSON.stringify(formData),
+                    success : function (data) {
+                        if(data.row.xAxis.length == 0){
+                            alert("该时间段无数据!");
+                            return;
+                        }
+                        if(!echartsVm.main){
+                            echartsVm.main = echarts.init(document.getElementById('main'));
+                            var mainoptions = {
+                                title: {
+                                    text: '消费柱状图'
+                                },
+                                tooltip: {
+                                    tirgger : 'axis'
+                                },
+                                legend: {
+                                    data:['支出']
+                                },
+                                xAxis: {
+                                    data  : data.row.xAxis
+                                    //data: ["衬衫","羊毛衫","雪纺衫","裤子","高跟鞋","袜子"]
+                                },
+                                yAxis: {},
+                                series: [{
+                                    name: '支出',
+                                    type: 'bar',
+                                    data : data.row.series
+                                    //   data: [5, 20, 36, 10, 10, 20]
+                                }]
+                            };
+                            echartsVm.mianOptions = mainoptions;
+                            echartsVm.main.setOption(mainoptions);
+                        }
+                        if(!echartsVm.pie){
+                            echartsVm.pie = echarts.init(document.getElementById('pie'));
+                            var Data = [];
+                            for(var i=0;i<data.row.xAxis.length;i++){
+                                Data.push({
+                                    'name' : data.row.xAxis[i],
+                                    'value': data.row.series[i]
+                                });
+                            }
+                            var pieoptions = {
+                                title: {
+                                    text : '支出比例图',
+                                    x: 'center'
+                                },
+                                tooltip: {
+                                    trigger: 'item',
+                                    formatter: "{a} <br/>{b} : {c} ({d}%)"
+                                },
+                                legend: {
+                                    orient: 'vectical',
+                                    left: 'left',
+                                    data: data.row.xAxis
+                                },
+                                series: {
+                                    name : '消费类型',
+                                    type : 'pie',
+                                    radius : '55%',
+                                    center : ['50%','60%'],
+                                    data : Data,
+                                    itemStyle: {
+                                        emphasis: {
+                                            shadowBlur: 10,
+                                            shadowOffsetX: 0,
+                                            shadowColor: 'rgba(0, 0, 0, 0.5)'
+                                        }
+                                    }
+                                }
+                            }
+                            echartsVm.pieOptions = pieoptions;
+                            echartsVm.pie.setOption(pieoptions);
+                            return;
+                        }
+                        var mainOptions = echartsVm.main.getOption();
+                        echartsVm.main.setOption({
+                            xAxis: {
+                                data  : data.row.xAxis
+                                //data: ["衬衫","羊毛衫","雪纺衫","裤子","高跟鞋","袜子"]
+                            },
+                            series: [{
+                                data : data.row.series
+                                //   data: [5, 20, 36, 10, 10, 20]
+                            }]
+                        });
+                        var Data = [];
+                        for(var i=0;i<data.row.xAxis.length;i++){
+                            Data.push({
+                                'name' : data.row.xAxis[i],
+                                'value': data.row.series[i]
+                            });
+                        }
+                        var pieOptions = echartsVm.pie.getOption();
+                        echartsVm.pie.setOption({
+                            legend: {
+                                data: data.row.xAxis
+                            },
+                            series: {
+                                data : Data
+                            }
+                        })
+                        // echartsVm.mianOptions.xAxis.data =  data.row.xAxis;
+                        // echartsVm.mianOptions.series.data = data.row.series;
+                        // echartsVm.main.setOption(echartsVm.mianOptions);
+                        // var Data = [];
+                        // for(var i=0;i<data.row.xAxis.length;i++){
+                        //     Data.push({
+                        //         'name' : data.row.xAxis[i],
+                        //         'value': data.row.series[i]
+                        //     });
+                        // }
+                        // echartsVm.pieoptions.legend.data =  data.row.xAxis;
+                        // echartsVm.pieoptions.series.data = Data;
+                        // echartsVm.pie.setOption(echartsVm.pieoptions);
+                    }
+                })
+            })
+        }
+    });
 
     //添加管理员
     var addAdmin = avalon.define({

@@ -151,7 +151,7 @@ var selectEchartsData = function (obj, callback) {
     var sql = "select t_spend.Sort_id,t_type.Sort_name,sum(t_spend.Price) as 'sum'" +
         " from t_type inner  join t_spend " +
         "  on  t_type.Sort_id = t_spend.Sort_id" +
-        " and t_spend.purchaser = '"+obj.purchaser+"'and purchaserDate between '"+obj.beginTime+"' and'" +obj.endTime+"'" +
+        " and t_spend.purchaser = '"+obj.user+"'and purchaserDate between '"+obj.beginTime+"' and'" +obj.endTime+"'" +
         " group BY t_spend.Sort_id";
     try {
         //执行插入语句，成功返回success

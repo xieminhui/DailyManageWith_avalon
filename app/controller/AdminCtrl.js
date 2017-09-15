@@ -188,8 +188,8 @@ exports.manageAccount = function(req, res) {
 //查找表格数据
 exports.getEchartData = function (req, res) {
     var obj = {
-        purchaser : req.session.Admin_name,
-        beginTime : req.body.beginTime,
+        user : req.session.Admin_name,
+        beginTime : req.body.startTime,
         endTime   : req.body.endTime
     };
     SpendDao.selectEchartsData(obj, function (msg,row) {

@@ -109,3 +109,12 @@
     color: #FFFFFF !important;
     background-color: #337A7B !important;
 }
+#purchaserDate{
+    width: 200px !important;
+}
+#starttime{
+    width: 200px !important;
+}
+#endtime{
+    width: 200px !important;
+}
