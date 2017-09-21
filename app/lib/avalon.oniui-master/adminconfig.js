@@ -8,6 +8,9 @@
         "css-builder": "./combo/css-builder",
         "normalize": "./combo/normalize",
         domReady: "./combo/domReady",
+        "echarts" : "../echarts",
+        "html5shiv" : "../html5shiv.min",
+        "respond" : "../respond.min"
     },
     name : 'admin',
     optimize: 'none',//是否压缩 默认是压缩的，去掉不要就是压缩

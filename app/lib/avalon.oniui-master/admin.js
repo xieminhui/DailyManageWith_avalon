@@ -1,14 +1,16 @@
-// ///用于设置路由
 // require.config({
-//     baseUrl : "../../lib/avalon.oniui-master",
+//     baseUrl : "../../lib",
 //     paths: {
-//         "mmstate": "/mmRouter/mmState",
-//         "simplegrid": "/simplegrid/avalon.simplegrid",
-//         "mmRequest" : "/mmRequest/mmRequest"
+//         "mmstate": "/avalon.oniui-master/mmRouter/mmState",
+//         "simplegrid": "/avalon.oniui-master/simplegrid/avalon.simplegrid",
+//         "mmRequest" : "/avalon.oniui-master/mmRequest/mmRequest",
+//         "datepicker" :'/avalon.oniui-master/datepicker/avalon.datepicker',
+//         "domReady" : "/avalon.oniui-master",
+//         "ehcarts" : "echarts"
 //     }
 // });
-//avalon.config({loader: false});
-require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simplegrid"], function() {
+
+require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simplegrid","./datepicker/avalon.datepicker","html5shiv","respond","echarts"], function() {
     avalon.define({       //这个一定要写再里面
         $id     :       'adminIndex'
     });
@@ -25,6 +27,11 @@ require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simpl
         onLoad : function (fromstate, tostate) {
             if(tostate.stateName == 'admin'){//这个很烦，如果不主动切换过去，登录进去后右边页面不会自动跳到第一个选项“添加类别”
                 avalon.router.go('admin.addSpendType');
+            }
+            if(tostate.stateName == 'admin.echarts'){
+                // require(['echarts'],function (ec) {
+                //   //  echartsVm.getEchartsData(ec);
+                // })
             }
         }
     });
@@ -53,12 +60,15 @@ require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simpl
     })
 //设置子路由添加类别，这里开始配置右下方主要内容部分
     avalon.state("admin.addSpendType", {
-        url: 'addSpendType',
+        url: 'admin/addSpendType',
         controller : 'addSpendType',
         views : {
             '' : {
                 templateUrl: '/tpl/addSpendType.html'
             }
+        },
+        onEnter : function () {
+            avalon.vmodels['navCtrl'].currentIndex = 0;
         }
     })
     //设置子路由查看全部类别
@@ -68,6 +78,9 @@ require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simpl
             '' : {
                 templateUrl: '/tpl/seeAllType.html'
             }
+        },
+        onEnter : function () {
+            avalon.vmodels['navCtrl'].currentIndex = 1;
         }
     })
     //添加消费支出
@@ -77,6 +90,9 @@ require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simpl
             '' : {
                 templateUrl: '/tpl/addSpending.html'
             }
+        },
+        onEnter : function () {
+            avalon.vmodels['navCtrl'].currentIndex = 2;
         }
     })
     //查看所有消费
@@ -86,6 +102,9 @@ require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simpl
             '' : {
                 templateUrl: '/tpl/seeAllSpend.html'
             }
+        },
+        onEnter : function () {
+            avalon.vmodels['navCtrl'].currentIndex = 3;
         }
     });
     //图表echarts
@@ -95,6 +114,16 @@ require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simpl
             '' : {
                 templateUrl: '/tpl/echarts.html'
             }
+        },
+        onEnter : function () {
+            avalon.vmodels['navCtrl'].currentIndex = 4;
+
+        },
+        onExit : function () {
+            echartsVm.main = null;
+            echartsVm.pie = null;
+            echartsVm.mainOptions = null;
+            echartsVm.pieOptions = null;
         }
     })
     //添加管理员
@@ -104,6 +133,9 @@ require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simpl
             '' : {
                 templateUrl: '/tpl/addAdmin.html'
             }
+        },
+        onEnter : function () {
+            avalon.vmodels['navCtrl'].currentIndex = 5;
         }
     })
     //添加管理员
@@ -113,6 +145,9 @@ require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simpl
             '' : {
                 templateUrl: '/tpl/manageAccount.html'
             }
+        },
+        onEnter : function () {
+            avalon.vmodels['navCtrl'].currentIndex = 6;
         }
     })
     //启动路由
@@ -160,6 +195,10 @@ require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simpl
         },
         rendered : function () {
             navCtrlVm.initActive();
+        },
+        currentIndex : 0,
+        isActive : function(j){
+            navCtrlVm.currentIndex=j;
         }
     });
     //添加类别
@@ -269,7 +308,7 @@ require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simpl
             typeId: '', //类别
             price: '',
             purchaserPlace: '',
-            purchaserDate: '',
+            purchaserDate: new Date().toLocaleDateString().replace(/\//g, '-'),
             currentNum: '',
             brief: ''
         },
@@ -285,7 +324,7 @@ require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simpl
         },
         addspend : function (e) {
             e.preventDefault();
-            addSpendVm.formData = {
+            var formData = {
                 purchaser: addSpendVm.formData.purchaser,
                 typeId: addSpendVm.formData.typeId, //类别
                 price: addSpendVm.formData.price,
@@ -299,7 +338,7 @@ require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simpl
                 dataType : 'json',
                 type :'post',
                 contentType	: "application/json",
-                data : JSON.stringify(addSpendVm.formData),
+                data : JSON.stringify(formData),
                 success :function (data) {
                     alert(data.success);
                     for(key in addSpendVm.formData){
@@ -313,6 +352,149 @@ require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simpl
         }
     });
     addSpendVm.gettypeArr();
+
+    //echarts
+    var echartsVm = avalon.define({
+        $id : "echart",
+        formData : {
+            startTime : new Date().toLocaleDateString().replace(/\//g, '-'),
+            endTime : new Date().toLocaleDateString().replace(/\//g, '-')
+        },
+        main : null,
+        pie : null,
+        mianOptions : null,
+        pieOptions : null,
+        getEchartsData : function () {
+            require(['echarts'],function (echarts) {
+                var formData = {
+                    startTime : echartsVm.formData.startTime,
+                    endTime : echartsVm.formData.endTime
+                };
+                avalon.ajax({
+                    url : '/echartsData',
+                    type : 'post',
+                    dataType : 'json',
+                    contentType : 'application/json',
+                    data : JSON.stringify(formData),
+                    success : function (data) {
+                        if(data.row.xAxis.length == 0){
+                            alert("该时间段无数据!");
+                            return;
+                        }
+                        if(!echartsVm.main){
+                            echartsVm.main = echarts.init(document.getElementById('main'));
+                            var mainoptions = {
+                                title: {
+                                    text: '消费柱状图'
+                                },
+                                tooltip: {
+                                    tirgger : 'axis'
+                                },
+                                legend: {
+                                    data:['支出']
+                                },
+                                xAxis: {
+                                    data  : data.row.xAxis
+                                    //data: ["衬衫","羊毛衫","雪纺衫","裤子","高跟鞋","袜子"]
+                                },
+                                yAxis: {},
+                                series: [{
+                                    name: '支出',
+                                    type: 'bar',
+                                    data : data.row.series
+                                    //   data: [5, 20, 36, 10, 10, 20]
+                                }]
+                            };
+                            echartsVm.mianOptions = mainoptions;
+                            echartsVm.main.setOption(mainoptions);
+                        }
+                        if(!echartsVm.pie){
+                            echartsVm.pie = echarts.init(document.getElementById('pie'));
+                            var Data = [];
+                            for(var i=0;i<data.row.xAxis.length;i++){
+                                Data.push({
+                                    'name' : data.row.xAxis[i],
+                                    'value': data.row.series[i]
+                                });
+                            }
+                            var pieoptions = {
+                                title: {
+                                    text : '支出比例图',
+                                    x: 'center'
+                                },
+                                tooltip: {
+                                    trigger: 'item',
+                                    formatter: "{a} <br/>{b} : {c} ({d}%)"
+                                },
+                                legend: {
+                                    orient: 'vectical',
+                                    left: 'left',
+                                    data: data.row.xAxis
+                                },
+                                series: {
+                                    name : '消费类型',
+                                    type : 'pie',
+                                    radius : '55%',
+                                    center : ['50%','60%'],
+                                    data : Data,
+                                    itemStyle: {
+                                        emphasis: {
+                                            shadowBlur: 10,
+                                            shadowOffsetX: 0,
+                                            shadowColor: 'rgba(0, 0, 0, 0.5)'
+                                        }
+                                    }
+                                }
+                            }
+                            echartsVm.pieOptions = pieoptions;
+                            echartsVm.pie.setOption(pieoptions);
+                            return;
+                        }
+                        //var mainOptions = echartsVm.main.getOption();
+                        echartsVm.main.setOption({
+                            xAxis: {
+                                data  : data.row.xAxis
+                                //data: ["衬衫","羊毛衫","雪纺衫","裤子","高跟鞋","袜子"]
+                            },
+                            series: [{
+                                data : data.row.series
+                                //   data: [5, 20, 36, 10, 10, 20]
+                            }]
+                        });
+                        var Data = [];
+                        for(var i=0;i<data.row.xAxis.length;i++){
+                            Data.push({
+                                'name' : data.row.xAxis[i],
+                                'value': data.row.series[i]
+                            });
+                        }
+                        //var pieOptions = echartsVm.pie.getOption();
+                        echartsVm.pie.setOption({
+                            legend: {
+                                data: data.row.xAxis
+                            },
+                            series: {
+                                data : Data
+                            }
+                        })
+                        // echartsVm.mianOptions.xAxis.data =  data.row.xAxis;
+                        // echartsVm.mianOptions.series.data = data.row.series;
+                        // echartsVm.main.setOption(echartsVm.mianOptions);
+                        // var Data = [];
+                        // for(var i=0;i<data.row.xAxis.length;i++){
+                        //     Data.push({
+                        //         'name' : data.row.xAxis[i],
+                        //         'value': data.row.series[i]
+                        //     });
+                        // }
+                        // echartsVm.pieOptions.legend.data =  data.row.xAxis;
+                        // echartsVm.pieOptions.series.data = Data;
+                        // echartsVm.pie.setOption(echartsVm.pieOptions);
+                    }
+                })
+            })
+        }
+    });
 
     //添加管理员
     var addAdmin = avalon.define({
@@ -359,8 +541,7 @@ require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simpl
             uName: '',
             pswOld :'',
             psw: '',
-            pswAgain :'',
-
+            pswAgain :''
         },
         manageAccount : function (e) {
             e.preventDefault();
@@ -396,6 +577,5 @@ require(["./mmRouter/mmState","./mmRequest/mmRequest","./simplegrid/avalon.simpl
             })
         }
     });
-
 })
 

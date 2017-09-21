@@ -1,19 +1,16 @@
-require.config({
-    baseUrl : "../../lib",
-    paths: {
-        "mmstate": "/avalon.oniui-master/mmRouter/mmState",
-        "simplegrid": "/avalon.oniui-master/simplegrid/avalon.simplegrid",
-        "mmRequest" : "/avalon.oniui-master/mmRequest/mmRequest",
-        "datepicker" :'/avalon.oniui-master/datepicker/avalon.datepicker'
-    },
-    shim : {
-        'echarts' : {
-            exports: 'echarts'
-        }
-    }
-});
+// require.config({
+//     baseUrl : "../../lib",
+//     paths: {
+//         "mmstate": "/avalon.oniui-master/mmRouter/mmState",
+//         "simplegrid": "/avalon.oniui-master/simplegrid/avalon.simplegrid",
+//         "mmRequest" : "/avalon.oniui-master/mmRequest/mmRequest",
+//         "datepicker" :'/avalon.oniui-master/datepicker/avalon.datepicker',
+//         "domReady" : "/avalon.oniui-master",
+//         "ehcarts" : "echarts"
+//     }
+// });
 
-require(["mmstate","mmRequest","simplegrid","datepicker"], function() {
+require(["../../lib/avalon.oniui-master/mmRouter/mmState","../../lib/avalon.oniui-master/mmRequest/mmRequest","../../lib/avalon.oniui-master/simplegrid/avalon.simplegrid","../../lib/avalon.oniui-master/datepicker/avalon.datepicker"], function() {
     avalon.define({       //这个一定要写再里面
         $id     :       'adminIndex'
     });
@@ -121,6 +118,12 @@ require(["mmstate","mmRequest","simplegrid","datepicker"], function() {
         onEnter : function () {
             avalon.vmodels['navCtrl'].currentIndex = 4;
 
+        },
+        onExit : function () {
+            echartsVm.main = null;
+            echartsVm.pie = null;
+            echartsVm.mainOptions = null;
+            echartsVm.pieOptions = null;
         }
     })
     //添加管理员
@@ -359,6 +362,8 @@ require(["mmstate","mmRequest","simplegrid","datepicker"], function() {
         },
         main : null,
         pie : null,
+        mianOptions : null,
+        pieOptions : null,
         getEchartsData : function () {
             require(['echarts'],function (echarts) {
                 var formData = {
@@ -445,7 +450,7 @@ require(["mmstate","mmRequest","simplegrid","datepicker"], function() {
                             echartsVm.pie.setOption(pieoptions);
                             return;
                         }
-                        var mainOptions = echartsVm.main.getOption();
+                        //var mainOptions = echartsVm.main.getOption();
                         echartsVm.main.setOption({
                             xAxis: {
                                 data  : data.row.xAxis
@@ -463,7 +468,7 @@ require(["mmstate","mmRequest","simplegrid","datepicker"], function() {
                                 'value': data.row.series[i]
                             });
                         }
-                        var pieOptions = echartsVm.pie.getOption();
+                        //var pieOptions = echartsVm.pie.getOption();
                         echartsVm.pie.setOption({
                             legend: {
                                 data: data.row.xAxis
@@ -482,9 +487,9 @@ require(["mmstate","mmRequest","simplegrid","datepicker"], function() {
                         //         'value': data.row.series[i]
                         //     });
                         // }
-                        // echartsVm.pieoptions.legend.data =  data.row.xAxis;
-                        // echartsVm.pieoptions.series.data = Data;
-                        // echartsVm.pie.setOption(echartsVm.pieoptions);
+                        // echartsVm.pieOptions.legend.data =  data.row.xAxis;
+                        // echartsVm.pieOptions.series.data = Data;
+                        // echartsVm.pie.setOption(echartsVm.pieOptions);
                     }
                 })
             })
