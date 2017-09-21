@@ -29,6 +29,9 @@ app
 	├──bootstrap-select-1.9.3 用到了select下拉框的动态加载，所以另外引用了样式文件
 	├──fetch-polyfill2 不支持ie8，后改为组件里面的avalon.ajax
 	├──jquery-1.9.1.js jquery
+	├──echarts
+	├──html5shiv.min.js
+	├──respond.min.js
 ├──model
 	├──Model.js	Java的理解是实体类，不过项目很多都是直接传对象的，没用到，不过数据定义在这个文件，方便理解和查看
 ├──static 静态文件，包含JS和CSS文件，可以用Grunt或者Gulp压缩混淆
